@@ -9,6 +9,7 @@ import { decide, type Decision } from "./strategy.js";
 const f = (n: number) => n.toFixed(2);
 
 async function execute(d: Decision, price: number, balances: Record<string, number>): Promise<string> {
+  if (d.action === "HOLD") return "-";
   const positionUsdt = (balances[d.symbol.replace("USDT", "")] ?? 0) * price;
   // Gestion du risque en code : une position max par actif, pas de vente à vide
   if (d.action === "BUY" && positionUsdt >= config.orderUsdt / 2) return "skip: already in position";
@@ -38,8 +39,7 @@ async function cycle() {
   const decisions = [];
   for (const market of markets) {
     const d = decide(market, judgments);
-    const result = d.action === "HOLD" ? "-" : await execute(d, market.price, balances);
-    decisions.push({ ...d, price: market.price, result });
+    decisions.push({ ...d, price: market.price, result: await execute(d, market.price, balances) });
   }
   console.table(
     decisions.map((d) => ({
