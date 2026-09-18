@@ -12,17 +12,20 @@ export const FEEDS = {
 };
 
 // La SEC exige un User-Agent identifiable ; Binance refuse les requêtes sans en-têtes de navigateur
-const HEADERS = { "user-agent": "Mozilla/5.0 trading-bot-jev (github.com/Spykoninho/trading-bot-jev)", clienttype: "web", lang: "en" };
+export const HEADERS = { "user-agent": "Mozilla/5.0 trading-bot-jev (github.com/Spykoninho/trading-bot-jev)", clienttype: "web", lang: "en" };
 
 const parser = new XMLParser({ ignoreAttributes: true, cdataPropName: "__cdata" });
 
 const text = (v: unknown): string =>
   typeof v === "object" && v !== null && "__cdata" in v ? String((v as { __cdata: unknown }).__cdata) : String(v ?? "");
 
-export function parseRss(xml: string, source: string): Headline[] {
+const plain = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 400);
+
+// `body` : juger le texte du message plutôt que son titre, que certains flux tronquent (posts Truth Social)
+export function parseRss(xml: string, source: string, body = false): Headline[] {
   const items = parser.parse(xml)?.rss?.channel?.item ?? [];
   return (Array.isArray(items) ? items : [items])
-    .map((item) => ({ title: text(item.title).trim(), source, publishedAt: new Date(text(item.pubDate)) }))
+    .map((item) => ({ title: body ? plain(text(item.description)) || text(item.title).trim() : text(item.title).trim(), source, publishedAt: new Date(text(item.pubDate)) }))
     // Posts sans texte (image ou vidéo seule) et dates illisibles : rien à juger
     .filter((h) => h.title && !h.title.startsWith("[No Title]") && !Number.isNaN(h.publishedAt.getTime()))
     .map((h) => ({ ...h, publishedAt: h.publishedAt.toISOString() }));
@@ -39,11 +42,11 @@ async function get(url: string): Promise<Response> {
   return res;
 }
 
-const rss = (name: string, kind: Source["kind"], url: string, everySec: number): Source => ({
+const rss = (name: string, kind: Source["kind"], url: string, everySec: number, body = false): Source => ({
   name,
   kind,
   everySec,
-  fetch: async () => parseRss(await (await get(url)).text(), name),
+  fetch: async () => parseRss(await (await get(url)).text(), name, body),
 });
 
 // Annonces officielles Binance : catalogue 48 = nouveaux listings, 161 = retraits de cotation
@@ -69,5 +72,5 @@ export const SOURCES: Source[] = [
   binance("Binance (annonces)", [48, 161], 30),
   rss("SEC (communiqués)", "primaire", "https://www.sec.gov/news/pressreleases.rss", 60),
   rss("Fed (communiqués)", "primaire", "https://www.federalreserve.gov/feeds/press_all.xml", 30),
-  rss("Trump (Truth Social)", "primaire", "https://trumpstruth.org/feed", 30),
+  rss("Trump (Truth Social)", "primaire", "https://trumpstruth.org/feed", 30, true),
 ];

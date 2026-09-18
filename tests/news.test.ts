@@ -15,6 +15,16 @@ describe("parseRss", () => {
   });
 });
 
+describe("parseRss with body", () => {
+  it("judges the message text instead of a truncated title, and skips untitled media posts", () => {
+    const feed = `<rss><channel>
+      <item><title>I am hereby raising...</title><description><![CDATA[<p>I am hereby raising tariffs.</p><p>I have authorized a 90 day PAUSE.</p>]]></description><pubDate>Wed, 09 Apr 2025 17:18:00 GMT</pubDate></item>
+      <item><title>[No Title] - Post from April 9, 2025</title><description></description><pubDate>Wed, 09 Apr 2025 17:00:00 GMT</pubDate></item>
+    </channel></rss>`;
+    expect(parseRss(feed, "Trump", true).map((h) => h.title)).toEqual(["I am hereby raising tariffs. I have authorized a 90 day PAUSE."]);
+  });
+});
+
 describe("dedupe", () => {
   it("drops repeated titles case-insensitively", () => {
     const h = (title: string) => ({ title, source: "x", publishedAt: "" });

@@ -183,7 +183,7 @@ async function compare(symbols: string[]) {
     holdStats: { return: plain.stats.holdReturn, drawdown: plain.stats.holdDrawdown },
     plain: variant(plain),
     jev: jev && variant(jev),
-    news: { headlines: judgments.length, daysCovered: covered.size, days: Math.round((plain.times.at(-1)! - plain.times[0]!) / 86_400_000) },
+    news: { headlines: judgments.length, daysCovered: covered.size, days: Math.round((plain.times.at(-1)! - plain.times[0]!) / 86_400_000) + 1 },
   };
 }
 

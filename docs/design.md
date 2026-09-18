@@ -128,3 +128,15 @@ Backtest, stop-loss, WebSocket temps réel, plusieurs stratégies, UI.
   `dueReadings` (relevés à +5/+15/+60/+240 min sur bougie 1 min clôturée), `scoreboard`
   (rendement moyen dans le sens de Jev, fort impact vs autres). Persisté dans `data/events.json`.
 - Aucune stratégie ne trade sur ces événements : on mesure d'abord, en conditions réelles.
+
+## v9 — replay et étude étendus aux sources primaires
+
+- `history.ts` : `collectPrimary` (index JSON de la Fed avec conversion heure de New York → UTC,
+  archive CNN des posts Truth Social, pagination de l'API Binance) + captures Wayback du flux SEC ;
+  un index Wayback indisponible saute la source au lieu d'arrêter la collecte. 47 618 titres jugés.
+- Replay : +199,3 % avec Jev (toutes sources) contre +194,8 % sans.
+- `event-study.ts` sépare presse et sources primaires : aucune dérive exploitable dans le sens
+  de Jev sur 117 événements primaires ; cause principale identifiée = texte tronqué ou titre
+  sans contenu (post du 9 avril 2025, communiqués FOMC). Le direct juge désormais le texte du
+  post Truth Social (`parseRss(..., body = true)`), pas le titre RSS coupé à ~90 caractères.
+- Piste suivante : texte complet et questions propres à chaque source, validés par le test en direct.

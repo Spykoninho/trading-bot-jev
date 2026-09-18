@@ -1,11 +1,16 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { judgeHeadlines, type Judgment } from "./brain.js";
 import { config } from "./config.js";
-import { FEEDS, parseRss, type Headline } from "./news.js";
+import { FEEDS, HEADERS, parseRss, type Headline } from "./news.js";
 
-// Archive des titres d'époque : la Wayback Machine conserve des captures des mêmes flux RSS que le direct
+// Archive des titres d'époque, avec les mêmes noms de sources que le direct
 const FILE = "data/history.json";
 const WAYBACK = "https://web.archive.org";
+// Flux RSS sans archive propre : on passe par leurs captures de la Wayback Machine
+const WAYBACK_FEEDS = { ...FEEDS, "SEC (communiqués)": "https://www.sec.gov/news/pressreleases.rss" };
+const FED_INDEX = "https://www.federalreserve.gov/json/ne-press.json";
+const TRUMP_ARCHIVE = "https://ix.cnn.io/data/truth-social/truth_archive.json";
+const BINANCE_CATALOGS = [48, 161];
 
 type Archive = { captures: string[]; headlines: Headline[]; judgments: Judgment[] };
 
@@ -55,9 +60,12 @@ async function pool<T>(items: T[], size: number, worker: (item: T) => Promise<vo
 async function collectHeadlines(archive: Archive, from: Date): Promise<void> {
   const seen = new Set(archive.headlines.map((h) => h.title));
   const done = new Set(archive.captures);
-  for (const [source, feedUrl] of Object.entries(FEEDS)) {
+  for (const [source, feedUrl] of Object.entries(WAYBACK_FEEDS)) {
     const url = feedUrl.replace("https://", "");
-    const todo = (await listCaptures(url, from)).map((ts) => `${source}:${ts}`).filter((id) => !done.has(id));
+    // L'index de la Wayback Machine est parfois surchargé : on saute la source, elle sera reprise au prochain lancement
+    const captures = await listCaptures(url, from).catch((err: Error) => console.error(`${source} : index Wayback indisponible (${err.message})`));
+    if (!captures) continue;
+    const todo = captures.map((ts) => `${source}:${ts}`).filter((id) => !done.has(id));
     console.log(`${source} : ${todo.length} captures à télécharger`);
     let count = 0;
     await pool(todo, 4, async (id) => {
@@ -87,6 +95,54 @@ async function collectHeadlines(archive: Archive, from: Date): Promise<void> {
   }
 }
 
+// La Fed date ses communiqués en heure de New York, sans fuseau : on retrouve l'instant UTC
+export function easternToIso(text: string): string {
+  const asUtc = Date.parse(`${text} UTC`);
+  const inNewYork = Date.parse(`${new Date(asUtc).toLocaleString("en-US", { timeZone: "America/New_York" })} UTC`);
+  return new Date(asUtc + (asUtc - inNewYork)).toISOString();
+}
+
+async function getJson<T>(url: string): Promise<T> {
+  return retry(async () => {
+    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(120_000) });
+    if (!res.ok) throw new Error(`${url}: ${res.status}`);
+    return JSON.parse((await res.text()).replace(/^\uFEFF/, "")) as T;
+  });
+}
+
+// Sources primaires qui publient leur propre archive horodatée : Fed, posts de Trump, annonces Binance
+async function collectPrimary(archive: Archive, from: Date): Promise<void> {
+  const seen = new Set(archive.headlines.map((h) => h.title));
+  const add = (title: string, source: string, publishedAt: string) => {
+    if (!title || seen.has(title) || Date.parse(publishedAt) < from.getTime()) return;
+    seen.add(title);
+    archive.headlines.push({ title, source, publishedAt });
+  };
+
+  const fed = await getJson<{ d?: string; t?: string }[]>(FED_INDEX);
+  for (const item of fed) if (item.d && item.t) add(item.t.trim(), "Fed (communiqués)", easternToIso(item.d));
+
+  // Posts réduits à leur texte, tronqué comme un titre : les posts image ou vidéo seuls sont ignorés
+  const posts = await getJson<{ created_at: string; content?: string }[]>(TRUMP_ARCHIVE);
+  for (const post of posts) {
+    const body = (post.content ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (body.length > 20) add(body.slice(0, 400), "Trump (Truth Social)", new Date(post.created_at).toISOString());
+  }
+
+  for (const catalog of BINANCE_CATALOGS) {
+    for (let page = 1; ; page++) {
+      const body = await getJson<{ data?: { catalogs?: { articles?: { title: string; releaseDate: number }[] }[] } }>(
+        `https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=${catalog}&pageNo=${page}&pageSize=50`,
+      );
+      const articles = body.data?.catalogs?.[0]?.articles ?? [];
+      for (const a of articles) add(a.title, "Binance (annonces)", new Date(a.releaseDate).toISOString());
+      if (!articles.length || articles.at(-1)!.releaseDate < from.getTime()) break;
+    }
+  }
+  console.log(`Sources primaires : ${archive.headlines.length} titres au total`);
+  await save(archive);
+}
+
 // Mêmes questions et même state que le direct : un titre par requête, jamais rejugé
 async function judgeArchive(archive: Archive): Promise<void> {
   const judged = new Set(archive.judgments.map((j) => j.headline.title));
@@ -109,7 +165,9 @@ async function judgeArchive(archive: Archive): Promise<void> {
 
 if (process.argv[1]?.endsWith("history.ts")) {
   const archive = await loadArchive();
-  await collectHeadlines(archive, new Date(Date.now() - config.backtestYears * 365 * 86_400_000));
+  const from = new Date(Date.now() - config.backtestYears * 365 * 86_400_000);
+  await collectPrimary(archive, from);
+  await collectHeadlines(archive, from);
   if (!process.argv.includes("--no-judge")) await judgeArchive(archive);
   console.log(`Terminé : ${archive.headlines.length} titres, ${archive.judgments.length} jugements dans ${FILE}`);
 }

@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import type { Judgment } from "./brain.js";
 import { config } from "./config.js";
 import { loadArchive } from "./history.js";
+import { SOURCES } from "./news.js";
 
 // Étude d'événements : le prix bouge-t-il dans le sens prédit par Jev APRÈS la parution d'un titre, ou avant ?
 const CACHE = "data/event-klines.json";
@@ -32,6 +33,9 @@ function summarize(values: number[]) {
 const { judgments } = await loadArchive();
 const relevant = judgments.filter((j) => j.asset !== "unrelated" && j.assetConfidence >= config.news.minConfidence);
 const strong = relevant.filter((j) => j.material >= 0.7 && Math.abs(j.sentiment) >= 0.5);
+// Presse = article écrit après l'événement ; primaire = l'émetteur lui-même, horodaté à l'instant de l'événement
+const kind = Object.fromEntries(SOURCES.map((s) => [s.name, s.kind]));
+const strongOf = (k: string) => strong.filter((j) => kind[j.headline.source] === k);
 const dull = relevant.filter((j) => j.material < 0.3);
 // Témoin : autant de titres que Jev juge anodins, répartis sur toute la période
 const control = dull.filter((_, i) => i % Math.floor(dull.length / strong.length) === 0).slice(0, strong.length);
@@ -39,7 +43,7 @@ const control = dull.filter((_, i) => i % Math.floor(dull.length / strong.length
 const cache: Record<string, Prices> = JSON.parse(await readFile(CACHE, "utf8").catch(() => "{}"));
 const table: Record<string, Record<string, string>> = {};
 
-for (const [group, events] of Object.entries({ "Fort impact selon Jev": strong, "Témoin (titres anodins)": control })) {
+for (const [group, events] of Object.entries({ "Fort impact, presse": strongOf("presse"), "Fort impact, sources primaires": strongOf("primaire"), "Témoin (titres anodins)": control })) {
   const returns: Record<string, number[]> = Object.fromEntries(Object.keys(HORIZONS).map((h) => [h, []]));
   const net: number[] = [];
   const last: Record<string, number> = {};

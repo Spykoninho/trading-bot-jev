@@ -67,26 +67,27 @@ entrée plus tôt, sortie plus tard), et un risque réglementaire récent et for
 
 ### Avec ou sans TypeSafe : la mesure
 
-`npm run history` retrouve les titres d'époque dans les captures des flux RSS CoinDesk et
-Cointelegraph de la Wayback Machine (27 535 titres, 850 jours couverts sur 1 028), les fait
-juger par Jev avec les mêmes questions que le direct (≈ 0,8 $ de crédits, 20 min), puis le
-backtest les rejoue sans regard vers le futur : à chaque décision, seuls les titres déjà parus
-dans les 24 h sont visibles. Résultat sur BTC + ETH + SOL, 3 ans, frais inclus :
+`npm run history` reconstitue les titres d'époque des mêmes sources que le direct : captures RSS
+de la Wayback Machine pour CoinDesk, Cointelegraph et la SEC, index horodaté de la Fed, archive
+publique des posts Truth Social de Trump, annonces Binance paginées. Soit 47 618 titres, tous
+jugés par Jev avec les questions du direct (≈ 1,40 $ de crédits au total). Le backtest les rejoue
+sans regard vers le futur : à chaque décision, seuls les titres déjà parus dans les 24 h sont
+visibles. Résultat sur BTC + ETH + SOL, 3 ans, frais inclus :
 
 | Variante | Rendement | Pire creux | Allers-retours |
 | --- | --- | --- | --- |
-| Stratégie **avec Jev** | **+196,6 %** | −31,0 % | 135 |
-| Stratégie sans news | +193,4 % | −31,3 % | 122 |
-| Acheter et garder | +68,2 % | −64,6 % | – |
+| Stratégie **avec Jev**, toutes sources | **+199,3 %** | −31,6 % | 135 |
+| Stratégie sans news | +194,8 % | −31,3 % | 122 |
+| Acheter et garder | +68,9 % | −64,6 % | – |
 
-Lecture honnête : l'apport est **positif mais faible** (+3 points), et il vient surtout du
-décalage des seuils (+2,3) plus que du veto réglementaire (+0,8). Il grandit quand on donne plus
-de poids aux news (jusqu'à +13 points avec un décalage de 2 %, puis il se dégrade à 3 %), mais il
-n'est pas homogène : −2,8 points sur BTC seul, +0,6 sur ETH, +8,7 sur SOL. Sur ~130 ordres, un
-tel écart reste compatible avec du bruit. Conclusion : sur une stratégie lente pilotée par le
-prix, les titres de presse changent peu la décision ; Jev y sert de garde-fou et de contexte
-lisible, pas de moteur de performance. Deux limites de la mesure : on ne juge que le titre, pas
-l'article, et un modèle entraîné après coup peut connaître la suite de certains événements.
+Lecture honnête : l'apport est **positif mais faible** (+4,5 points ; +3 avec la presse seule),
+et il vient surtout du décalage des seuils plus que du veto réglementaire. Il grandit quand on
+donne plus de poids aux news (jusqu'à +13 points avec un décalage de 2 %, puis il se dégrade à
+3 %), mais il n'est pas homogène entre actifs (négatif sur BTC seul, surtout porté par SOL). Sur
+~130 ordres, un tel écart reste compatible avec du bruit. Conclusion : sur une stratégie lente
+pilotée par le prix, les news changent peu la décision ; Jev y sert de garde-fou et de contexte
+lisible, pas de moteur de performance. Deux limites : on ne juge que le titre (ou le début du
+post), et un modèle entraîné après coup peut connaître la suite de certains événements.
 
 Tout se règle dans `src/config.ts`.
 
@@ -104,12 +105,23 @@ de chaque parution, dans le sens prédit par Jev, avec une entrée réaliste 2 m
 Jev lit juste : le prix a bien bougé dans son sens, mais **avant** la parution (jusqu'à +0,15 %
 sur les titres les plus forts, et des cas comme « Ether Jumps 10 % After… », déjà +7,6 % quand
 l'article sort). Après la parution, il reste une dérive six fois plus petite que les frais, et
-les titres « forts » ne sont pas suivis de mouvements plus amples que les titres anodins (0,43 %
-en moyenne sur 1 h dans les deux cas). L'effet est aussi faible sur 2026 que sur 2023-2024, donc
-ce n'est pas la mémoire du modèle qui le fabrique. Conclusion : le goulot n'est pas Jev (~100 ms)
-mais la **source** ; un article de presse décrit un mouvement déjà fait. Une stratégie
-événementielle n'a de sens qu'avec des sources primaires (annonces d'exchanges, communiqués
-officiels, comptes X), et ne peut se valider qu'en papier, en direct.
+les titres « forts » ne sont pas suivis de mouvements plus amples que les titres anodins. L'effet
+est aussi faible sur 2026 que sur 2023-2024, donc ce n'est pas la mémoire du modèle qui le
+fabrique. Pour la presse, le goulot n'est pas Jev (~100 ms) mais la **source** : un article
+décrit un mouvement déjà fait.
+
+Même étude sur les **sources primaires** (117 événements à fort impact, horodatés à l'instant de
+l'événement) : pas de mouvement avant, ce qui est logique, mais pas de dérive exploitable après
+non plus (−0,12 % à 1 h dans le sens de Jev, t = −1,9 ; « suivre Jev » : −0,32 % par ordre). Le
+détail explique pourquoi. Trump : le post du 9 avril 2025 « je relève les droits de douane sur la
+Chine à 125 % » est jugé baissier, mais il annonçait plus loin la pause de 90 jours et le BTC a
+pris +4,3 % en une heure ; le texte tronqué à 400 caractères cachait la partie décisive. SEC :
+16 événements sur 17 sont des poursuites pour fraude, jugées baissières, que le marché ignore.
+Fed : un seul fort impact sur 374 communiqués, car « Federal Reserve issues FOMC statement » ne
+dit pas si les taux montent. Binance : annonces sur de petites cryptos, sans effet sur le BTC.
+La leçon : sur une source primaire, la vitesse ne suffit pas ; il faut lire le **contenu complet**
+et poser des questions propres à chaque source, et l'échantillon (117) reste trop petit pour
+conclure. D'où le test en direct.
 
 ### Le test en direct sur sources primaires
 
