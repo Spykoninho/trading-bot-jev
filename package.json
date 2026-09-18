@@ -8,7 +8,8 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "backtest": "tsx src/backtest-cli.ts",
-    "history": "tsx src/history.ts"
+    "history": "tsx src/history.ts",
+    "study": "tsx src/event-study.ts"
   },
   "keywords": [],
   "author": "",

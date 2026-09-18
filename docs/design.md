@@ -107,3 +107,13 @@ Backtest, stop-loss, WebSocket temps réel, plusieurs stratégies, UI.
   et la couverture ; le replay trace les trois courbes.
 - Résultat : +196,6 % avec Jev contre +193,4 % sans ; effet faible, non homogène par actif.
   `newsTilt` laissé à 0,5 % pour ne pas sur-ajuster sur la même période.
+
+## v7 — étude d'événements (faut-il trader les news ?)
+
+- `event-study.ts` (`npm run study`) : pour chaque titre à fort impact selon Jev et un groupe
+  témoin, rendement signé à la minute avant/après la parution, entrée à +2 min, dédoublonnage
+  par actif/sens sur 30 min, prix mis en cache dans `data/event-klines.json`.
+- Résultat : le mouvement précède l'article (+0,057 % sur l'heure avant, t = 2,5) ; dérive
+  résiduelle +0,03 % à 1 h contre 0,2 % de frais ; amplitude post-parution identique au témoin.
+  Les flux RSS de presse sont trop lents pour une stratégie événementielle ; piste suivante :
+  sources primaires + validation en papier, en direct.

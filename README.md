@@ -90,6 +90,27 @@ l'article, et un modèle entraîné après coup peut connaître la suite de cert
 
 Tout se règle dans `src/config.ts`.
 
+### Et réagir aux news elles-mêmes ? L'étude d'événements
+
+`npm run study` prend les 1 201 titres que Jev juge à fort impact (`material ≥ 0,7`,
+`|sentiment| ≥ 0,5`), autant de titres anodins comme témoin, et mesure le prix à la minute autour
+de chaque parution, dans le sens prédit par Jev, avec une entrée réaliste 2 min après la parution :
+
+| | Heure **avant** la parution | +15 min | +1 h | « Suivre Jev 1 h », frais inclus |
+| --- | --- | --- | --- | --- |
+| Fort impact selon Jev | **+0,057 %** (t = 2,5) | +0,018 % (t = 1,9) | +0,032 % (t = 1,8) | **−0,17 % par ordre**, 33 % gagnants |
+| Témoin | +0,015 % | 0,000 % | −0,010 % | −0,21 % par ordre |
+
+Jev lit juste : le prix a bien bougé dans son sens, mais **avant** la parution (jusqu'à +0,15 %
+sur les titres les plus forts, et des cas comme « Ether Jumps 10 % After… », déjà +7,6 % quand
+l'article sort). Après la parution, il reste une dérive six fois plus petite que les frais, et
+les titres « forts » ne sont pas suivis de mouvements plus amples que les titres anodins (0,43 %
+en moyenne sur 1 h dans les deux cas). L'effet est aussi faible sur 2026 que sur 2023-2024, donc
+ce n'est pas la mémoire du modèle qui le fabrique. Conclusion : le goulot n'est pas Jev (~100 ms)
+mais la **source** ; un article de presse décrit un mouvement déjà fait. Une stratégie
+événementielle n'a de sens qu'avec des sources primaires (annonces d'exchanges, communiqués
+officiels, comptes X), et ne peut se valider qu'en papier, en direct.
+
 ## Interface
 
 - **Portefeuille en direct** : valeur à la seconde, gain/perte, cash, positions avec prix
