@@ -50,8 +50,11 @@ tendance baissière  si une bougie 4h clôture sous      EMA 200 × 0,99  → to
 entre les deux      on ne change rien (hystérésis contre les faux signaux)
 ```
 
-- Le capital est réparti à parts égales entre les symboles, et investi en entier quand la
+- Le capital est réparti à parts égales entre les actifs choisis, et investi en entier quand la
   tendance est haussière ; en cash sinon.
+- Trois actifs sont proposés : BTC (≈ 2,3 % de volatilité par jour), ETH (≈ 3,2 %) et **SOL**
+  (≈ 4,1 %, presque deux fois le BTC). Avec SOL, le backtest passe à +193 % (pire creux −31 %),
+  mais plus de volatilité n'est pas un gain garanti : la même règle finit à −5 % sur AVAX.
 - Les variantes voisines (EMA 150/300, bande 0 à 2 %) donnent +127 à +161 % : le résultat ne
   dépend pas d'un réglage chanceux. Le long/short n'apporte rien de robuste.
 - ~12 allers-retours par an et par actif, dont seulement un quart de gagnants : le suivi de
@@ -74,7 +77,9 @@ Tout se règle dans `src/config.ts`.
 - **Replay** : la stratégie rejouée sur 3 ans d'historique réel, contre « acheter et garder »,
   avec vitesse réglable (Pause, ×1, ×5, ×25, Fin). Même fonction `decide` que le direct.
 - **Ordres du bot** et **Titres jugés par Jev** (les titres ignorés sont grisés).
-- **Recommencer** remet le portefeuille à 1 000 USDT ; le bot se réaligne aussitôt sur la tendance.
+- **Nouvelle simulation** : tu coches les actifs sur lesquels le bot peut investir (BTC, ETH,
+  SOL), le portefeuille repart à 1 000 USDT et le bot se réaligne aussitôt sur la tendance. Les
+  actifs non retenus restent affichés, grisés, et le replay suit la sélection.
 
 L'état (portefeuille + jugements) est persisté dans `data/state.json`.
 

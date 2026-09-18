@@ -1,7 +1,7 @@
 import { TypeSafeClient, choice, noul, score, type SystemOneResult } from "@typesafe-ai/sdk";
 import type { Headline } from "./news.js";
 
-export type Asset = "BTC" | "ETH" | "crypto" | "unrelated";
+export type Asset = "BTC" | "ETH" | "SOL" | "crypto" | "unrelated";
 
 export type Judgment = {
   headline: Headline;
@@ -19,6 +19,7 @@ export const questions = {
   asset: choice("Which asset is this crypto news headline mainly about?", {
     BTC: "Bitcoin specifically",
     ETH: "Ethereum specifically",
+    SOL: "Solana specifically",
     crypto: "The crypto market in general, or another coin large enough to move the whole market",
     unrelated: "Not about crypto markets: sponsored content, tutorials, unrelated topics",
   }),

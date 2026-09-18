@@ -85,3 +85,13 @@ Backtest, stop-loss, WebSocket temps réel, plusieurs stratégies, UI.
 - Jev : biais news = décalage des seuils d'au plus ±0,5 %, veto réglementaire conservé. Non backtesté.
 - Le direct ne décide que sur bougies clôturées (rafraîchies chaque minute) ; au démarrage et
   après un reset, le bot s'aligne immédiatement sur la tendance courante.
+
+## v5 — actif volatil au choix
+
+- Ajout de SOLUSDT (volatilité ≈ 1,8× celle du BTC, liquide, bien couvert par la presse) et de
+  l'option `SOL` dans la question `asset` de Jev. La liste des actifs devient une constante de
+  `config.ts` (plus de variable `SYMBOLS`) car elle est liée aux options de la question.
+- `state.active` : actifs retenus pour la simulation, choisis dans une fenêtre « Nouvelle
+  simulation » (`POST /api/reset {symbols}`), persistés ; capital réparti entre eux.
+- Les tendances sont calculées pour tous les actifs, le bot n'agit que sur les actifs retenus ;
+  le backtest/replay est mis en cache par sélection.

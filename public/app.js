@@ -12,6 +12,8 @@ const base = (symbol) => symbol.replace("USDT", "");
 const ACTIONS = { BUY: "▲ Achat", SELL: "▼ Vente" };
 const TRENDS = { up: "▲ Tendance haussière", down: "▼ Tendance baissière", none: "■ Pas de tendance" };
 const INTERVALS = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14_400, "1d": 86_400 };
+// Volatilité journalière mesurée sur 3 ans de bougies Binance, pour aider à choisir
+const ASSET_NOTES = { BTC: "Bitcoin, le moins volatil des trois (≈ 2,3 % par jour)", ETH: "Ethereum, volatilité intermédiaire (≈ 3,2 % par jour)", SOL: "Solana, presque deux fois plus volatil que le Bitcoin (≈ 4,1 % par jour) : gains et pertes amplifiés" };
 
 // Les titres RSS sont des données non fiables : tout passe par des nœuds texte, jamais innerHTML
 function el(tag, attrs = {}, ...children) {
@@ -90,7 +92,8 @@ function setupMarket(symbol) {
   const price = el("strong", {}, "–");
   const chartBox = el("div", { class: "chart" });
   const signal = el("div", { class: "signal" });
-  $("markets").append(el("section", { class: "panel", "aria-label": `Cours ${base(symbol)}` }, el("div", { class: "market-head" }, el("h2", {}, `${base(symbol)} / USDT`), price), chartBox, signal));
+  const panel = el("section", { class: "panel", "aria-label": `Cours ${base(symbol)}` }, el("div", { class: "market-head" }, el("h2", {}, `${base(symbol)} / USDT`), price), chartBox, signal);
+  $("markets").append(panel);
 
   const chart = createChart(chartBox, false);
   const series = chart.addSeries(LW.CandlestickSeries, {
@@ -101,7 +104,7 @@ function setupMarket(symbol) {
     borderVisible: false,
   });
   const threshold = (title, color) => series.createPriceLine({ price: 0, color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title });
-  markets[symbol] = { price, signal, chart, series, markers: LW.createSeriesMarkers(series, []), buyLine: threshold("achat", css("--up")), sellLine: threshold("vente", css("--down")), last: null, first: 0 };
+  markets[symbol] = { panel, price, signal, chart, series, markers: LW.createSeriesMarkers(series, []), buyLine: threshold("achat", css("--up")), sellLine: threshold("vente", css("--down")), last: null, first: 0 };
 }
 
 // zoom = true au chargement et au changement d'intervalle, pas lors des resynchronisations
@@ -154,7 +157,9 @@ function renderSignal(symbol, d, price) {
   const SCALE = 0.05;
   const gap = price / d.ema - 1;
   const zones = { low: (d.sellBelow / d.ema - 1) / SCALE, high: (d.buyAbove / d.ema - 1) / SCALE };
-  const detail = `${d.reason}. Prix ${signed(gap * 100, 1)} % par rapport à l'EMA ${state.config.strategy.emaPeriod} (${nf(d.ema)}), achat au-dessus de ${nf(d.buyAbove)}, vente sous ${nf(d.sellBelow)}. Biais news ${d.news === null ? "–" : signed(d.news)} (${d.headlinesUsed} titres).`;
+  const active = state.active.includes(symbol);
+  m.panel.classList.toggle("inactive", !active);
+  const detail = `${active ? d.reason : "Actif non retenu pour cette simulation : le bot n'y investit pas"}. Prix ${signed(gap * 100, 1)} % par rapport à l'EMA ${state.config.strategy.emaPeriod} (${nf(d.ema)}), achat au-dessus de ${nf(d.buyAbove)}, vente sous ${nf(d.sellBelow)}. Biais news ${d.news === null ? "–" : signed(d.news)} (${d.headlinesUsed} titres).`;
   m.signal.replaceChildren(gauge(gap / SCALE, zones, `${signed(gap * 100, 1)} %`), el("span", { class: `action ${d.trend === "up" ? "up" : d.trend === "down" ? "down" : ""}` }, TRENDS[d.trend]), el("span", { class: "why" }, detail));
 }
 
@@ -282,12 +287,13 @@ function replayStep() {
   replay.chart.timeScale().fitContent();
 
   const pct = (n) => `${signed(n * 100, 1)} %`;
+  const assets = replay.data.symbols.map(base).join(" + ");
   if (end < times.length) {
-    $("replayStats").textContent = `${day(now)} : stratégie ${nf(strategy[end - 1])} USDT, acheter et garder ${nf(hold[end - 1])} USDT, ${done.length} ordres.`;
+    $("replayStats").textContent = `${assets}, ${day(now)} : stratégie ${nf(strategy[end - 1])} USDT, acheter et garder ${nf(hold[end - 1])} USDT, ${done.length} ordres.`;
     return;
   }
   clearInterval(replay.timer);
-  $("replayStats").textContent = `Du ${day(times[0])} au ${day(now)} : stratégie ${pct(stats.strategyReturn)} (pire creux −${nf(stats.strategyDrawdown * 100, 0)} %), acheter et garder ${pct(stats.holdReturn)} (pire creux −${nf(stats.holdDrawdown * 100, 0)} %). ${stats.closed} allers-retours dont ${stats.wins} gagnants, ${nf(stats.fees)} USDT de frais : le suivi de tendance perd souvent un peu et gagne rarement beaucoup. Un résultat passé ne garantit rien pour la suite.`;
+  $("replayStats").textContent = `${assets}, du ${day(times[0])} au ${day(now)} : stratégie ${pct(stats.strategyReturn)} (pire creux −${nf(stats.strategyDrawdown * 100, 0)} %), acheter et garder ${pct(stats.holdReturn)} (pire creux −${nf(stats.holdDrawdown * 100, 0)} %). ${stats.closed} allers-retours dont ${stats.wins} gagnants, ${nf(stats.fees)} USDT de frais : le suivi de tendance perd souvent un peu et gagne rarement beaucoup. Un résultat passé ne garantit rien pour la suite.`;
 }
 
 function playReplay() {
@@ -316,8 +322,8 @@ function notify(message) {
   $("status").textContent = message;
 }
 
-async function api(path, method = "GET") {
-  const res = await fetch(path, { method });
+async function api(path, method = "GET", payload) {
+  const res = await fetch(path, { method, ...(payload ? { headers: { "content-type": "application/json" }, body: JSON.stringify(payload) } : {}) });
   const body = await res.json();
   if (!res.ok) throw new Error(body.error ?? `Erreur ${res.status}`);
   return body;
@@ -325,6 +331,13 @@ async function api(path, method = "GET") {
 
 async function load() {
   state = await api("/api/state");
+  // Le replay dépend des actifs choisis : on le recalcule à la prochaine lecture
+  clearInterval(replay.timer);
+  replay.data = null;
+  replay.strategy?.setData([]);
+  replay.hold?.setData([]);
+  replay.markers?.setMarkers([]);
+  $("replayStats").textContent = "";
   loadEquity();
   renderTrades();
   renderNews();
@@ -336,7 +349,6 @@ async function init() {
   state = await api("/api/state");
   setupEquity();
   state.config.symbols.forEach(setupMarket);
-  $("reset").textContent = `Recommencer à ${nf(state.startCash, 0)} USDT`;
 
   segmented($("intervals"), Object.keys(INTERVALS).map((key) => [key === "1d" ? "1D" : key, key]), interval, (key) => {
     interval = key;
@@ -370,8 +382,29 @@ async function init() {
   setInterval(() => loadCandles().catch(() => {}), 60_000);
 }
 
+// Nouvelle simulation : choix des actifs, puis remise à zéro du portefeuille
 $("reset").addEventListener("click", () => {
-  if (confirm("Remettre le portefeuille à son capital de départ et effacer l'historique des ordres ?")) api("/api/reset", "POST").catch((err) => notify(err.message));
+  $("setupIntro").textContent = `Le portefeuille repart à ${nf(state.startCash, 0)} USDT, répartis à parts égales entre les actifs cochés. L'historique des ordres est effacé.`;
+  $("setupError").textContent = "";
+  $("setupAssets").replaceChildren(
+    ...state.config.symbols.map((symbol) => {
+      const input = el("input", { type: "checkbox", name: "symbols", value: symbol });
+      input.checked = state.active.includes(symbol);
+      return el("label", { class: "asset" }, input, el("strong", {}, base(symbol)), el("small", {}, ASSET_NOTES[base(symbol)] ?? ""));
+    }),
+  );
+  $("setup").showModal();
+});
+
+$("setupStart").addEventListener("click", async (event) => {
+  event.preventDefault();
+  const symbols = [...$("setupAssets").querySelectorAll("input:checked")].map((input) => input.value);
+  try {
+    await api("/api/reset", "POST", { symbols });
+    $("setup").close();
+  } catch (err) {
+    $("setupError").textContent = err.message;
+  }
 });
 
 init().catch((err) => notify(`Impossible de joindre le bot : ${err.message}`));

@@ -38,7 +38,13 @@ export function startServer(): void {
   });
 
   app.post("/api/reset", async (c) => {
-    await reset();
+    const body = (await c.req.json().catch(() => ({}))) as { symbols?: unknown };
+    const symbols = Array.isArray(body.symbols) ? body.symbols.map(String) : [];
+    try {
+      await reset(symbols);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
     return c.json(view());
   });
 

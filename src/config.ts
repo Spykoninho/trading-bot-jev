@@ -5,8 +5,9 @@ try {
 const env = process.env;
 
 export const config = {
-  symbols: (env.SYMBOLS ?? "BTCUSDT,ETHUSDT").split(","),
-  // Portefeuille papier local : le capital est réparti à parts égales entre les symboles
+  // Actifs proposés à chaque nouvelle simulation ; chacun a son option dans la question `asset` de Jev (brain.ts)
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+  // Portefeuille papier local : le capital est réparti à parts égales entre les actifs choisis
   startCash: Number(env.START_CASH ?? 1000),
   fee: Number(env.FEE ?? 0.001),
   port: Number(env.PORT ?? 3210),

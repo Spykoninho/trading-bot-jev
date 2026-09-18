@@ -13,6 +13,8 @@ const MAX_JUDGMENTS = 60;
 
 export const state = {
   portfolio: newPortfolio(config.startCash),
+  // Actifs sur lesquels cette simulation investit, choisis à son lancement
+  active: [...config.symbols],
   judgments: [] as Judgment[],
   prices: {} as Record<string, number>,
   closes: {} as Record<string, number[]>,
@@ -32,7 +34,7 @@ export function subscribe(fn: Listener): () => void {
 
 async function persist(): Promise<void> {
   await mkdir("data", { recursive: true });
-  await writeFile(STATE_FILE, JSON.stringify({ portfolio: state.portfolio, judgments: state.judgments }));
+  await writeFile(STATE_FILE, JSON.stringify({ portfolio: state.portfolio, active: state.active, judgments: state.judgments }));
 }
 
 // Miroir optionnel sur le testnet Binance ; un échec n'affecte jamais le portefeuille papier
@@ -43,9 +45,9 @@ function mirror(trade: Trade): void {
 
 function act(d: Decision): void {
   if (d.action === "HOLD") return;
-  // Exécution au prix temps réel ; le capital est réparti à parts égales entre les symboles
+  // Exécution au prix temps réel ; le capital est réparti à parts égales entre les actifs choisis
   const order = { symbol: d.symbol, price: state.prices[d.symbol] ?? d.price, fee: config.fee, reason: d.reason };
-  const usdt = equity(state.portfolio, state.prices) / config.symbols.length;
+  const usdt = equity(state.portfolio, state.prices) / state.active.length;
   const trade = d.action === "BUY" ? buy(state.portfolio, { ...order, usdt }) : close(state.portfolio, order);
   if (!trade) return;
   console.log(`${trade.side} ${trade.symbol} ${trade.usdt.toFixed(2)} USDT @ ${trade.price} — ${trade.reason}`);
@@ -59,8 +61,9 @@ function decideAll(): void {
     const closes = state.closes[symbol];
     if (!closes) continue;
     const d = decide({ symbol, closes, judgments: state.judgments, position: state.portfolio.positions[symbol] });
+    // La tendance est calculée pour tous les actifs, mais le bot n'agit que sur ceux de la simulation
     state.signals[symbol] = d;
-    act(d);
+    if (state.active.includes(symbol)) act(d);
   }
 }
 
@@ -96,7 +99,8 @@ export async function start(): Promise<void> {
   try {
     const saved = JSON.parse(await readFile(STATE_FILE, "utf8"));
     const positions = Object.values(saved.portfolio?.positions ?? {}) as { cost?: number }[];
-    if (Array.isArray(saved.judgments) && positions.every((p) => p.cost !== undefined)) Object.assign(state, saved);
+    const active = (saved.active ?? []).filter((s: string) => config.symbols.includes(s));
+    if (active.length && positions.every((p) => p.cost !== undefined)) Object.assign(state, { ...saved, active });
   } catch {}
 
   startPriceFeed(config.symbols, (symbol, price) => {
@@ -113,7 +117,11 @@ export async function start(): Promise<void> {
   await safely(refreshCandles);
 }
 
-export async function reset(): Promise<void> {
+// Nouvelle simulation : l'utilisateur choisit les actifs, le bot s'aligne aussitôt sur leur tendance
+export async function reset(symbols: string[]): Promise<void> {
+  const active = config.symbols.filter((s) => symbols.includes(s));
+  if (!active.length) throw new Error("Choisis au moins un actif.");
+  state.active = active;
   state.portfolio = newPortfolio(config.startCash);
   recordEquity(state.portfolio, state.prices);
   decideAll();
@@ -122,13 +130,16 @@ export async function reset(): Promise<void> {
 }
 
 // Backtest sur l'historique réel, mis en cache une heure ; même fonction `decide` que le live
-let cached: { at: number; result: BacktestResult } | undefined;
+const cache = new Map<string, { at: number; result: BacktestResult & { symbols: string[] } }>();
 
-export async function runBacktest(): Promise<BacktestResult> {
-  if (cached && Date.now() - cached.at < 3_600_000) return cached.result;
-  const entries = await Promise.all(config.symbols.map(async (s) => [s, await fetchHistory(s, config.strategy.interval, config.backtestYears)] as const));
-  cached = { at: Date.now(), result: backtest(Object.fromEntries(entries)) };
-  return cached.result;
+export async function runBacktest() {
+  const symbols = [...state.active];
+  const hit = cache.get(symbols.join());
+  if (hit && Date.now() - hit.at < 3_600_000) return hit.result;
+  const entries = await Promise.all(symbols.map(async (s) => [s, await fetchHistory(s, config.strategy.interval, config.backtestYears)] as const));
+  const result = { symbols, ...backtest(Object.fromEntries(entries)) };
+  cache.set(symbols.join(), { at: Date.now(), result });
+  return result;
 }
 
 // Instantané léger poussé chaque seconde
@@ -156,6 +167,7 @@ export function view() {
   const p = state.portfolio;
   return {
     config: { symbols: config.symbols, fee: config.fee, live: config.live, strategy: config.strategy, news: config.news, backtestYears: config.backtestYears },
+    active: state.active,
     startedAt: p.startedAt,
     startCash: p.startCash,
     history: p.history,

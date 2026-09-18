@@ -15,8 +15,24 @@
         <h1>trading-bot-jev</h1>
         <p id="feed" class="feed"></p>
       </div>
-      <button id="reset">Recommencer</button>
+      <button id="reset">Nouvelle simulation</button>
     </header>
+
+    <dialog id="setup" aria-labelledby="setup-title">
+      <form method="dialog">
+        <h2 id="setup-title">Nouvelle simulation</h2>
+        <p id="setupIntro" class="muted"></p>
+        <fieldset>
+          <legend>Actifs sur lesquels le bot peut investir</legend>
+          <div id="setupAssets"></div>
+        </fieldset>
+        <p id="setupError" class="down" role="alert"></p>
+        <div class="controls">
+          <button value="cancel" formnovalidate>Annuler</button>
+          <button id="setupStart" value="start" class="primary">Lancer la simulation</button>
+        </div>
+      </form>
+    </dialog>
     <p id="status" role="status" class="status" hidden></p>
 
     <main>
