@@ -111,6 +111,23 @@ mais la **source** ; un article de presse décrit un mouvement déjà fait. Une 
 événementielle n'a de sens qu'avec des sources primaires (annonces d'exchanges, communiqués
 officiels, comptes X), et ne peut se valider qu'en papier, en direct.
 
+### Le test en direct sur sources primaires
+
+C'est ce que fait maintenant le bot en continu. En plus de la presse (sondée toutes les 60 s), il
+sonde des **sources primaires**, c'est-à-dire l'émetteur de l'événement lui-même : annonces
+officielles Binance (listings, retraits), communiqués de la SEC et de la Fed, posts Truth Social
+de Trump (via le miroir RSS trumpstruth.org), toutes les 30 à 60 s. Jev juge chaque nouveauté ;
+ses questions couvrent aussi la macro et la politique (un post sur des droits de douane compte
+comme « marché crypto dans son ensemble »).
+
+Chaque titre pertinent vu moins de 5 minutes après sa parution devient un **événement suivi** :
+prix temps réel à la détection, retard par rapport à la parution, sens prédit par Jev, puis prix
+relevé à +5 min, +15 min, +1 h et +4 h (bougie 1 min clôturée, donc robuste aux redémarrages).
+Le panneau « Test en direct » affiche le tableau et le rendement moyen dans le sens de Jev, fort
+impact contre le reste. Rien n'est recalculé après coup : ni mémoire du modèle, ni connaissance
+du futur. Il faut laisser tourner quelques semaines avant d'en tirer une conclusion, et aucune
+stratégie ne trade sur ces événements tant que la mesure n'est pas faite.
+
 ## Interface
 
 - **Portefeuille en direct** : valeur à la seconde, gain/perte, cash, positions avec prix
@@ -120,25 +137,29 @@ officiels, comptes X), et ne peut se valider qu'en papier, en direct.
   par rapport à l'EMA, biais news et raison de la décision.
 - **Replay** : la stratégie rejouée sur 3 ans d'historique réel, contre « acheter et garder »,
   avec vitesse réglable (Pause, ×1, ×5, ×25, Fin). Même fonction `decide` que le direct.
+- **Test en direct** : les titres captés à chaud, avec leur retard, l'avis de Jev et l'évolution
+  du prix à +5 min, +15 min, +1 h et +4 h.
 - **Ordres du bot** et **Titres jugés par Jev** (les titres ignorés sont grisés).
 - **Nouvelle simulation** : tu coches les actifs sur lesquels le bot peut investir (BTC, ETH,
   SOL), le portefeuille repart à 1 000 USDT et le bot se réaligne aussitôt sur la tendance. Les
   actifs non retenus restent affichés, grisés, et le replay suit la sélection.
 
-L'état (portefeuille + jugements) est persisté dans `data/state.json`.
+L'état est persisté dans `data/` : `state.json` (portefeuille, jugements, titres déjà vus) et
+`events.json` (événements suivis).
 
 ## Architecture
 
 ```
 market.ts       bougies REST (+ historique paginé) et flux WebSocket miniTicker Binance, sans clé
-news.ts         RSS CoinDesk + Cointelegraph
+news.ts         sources sondées : presse (RSS CoinDesk, Cointelegraph) et primaires (Binance, SEC, Fed, Trump)
+events.ts       test en direct : événements suivis, relevés de prix à échéance, bilan par niveau d'impact
 brain.ts        1 requête TypeSafe par titre : asset, sentiment, material, regulatory_risk
 strategy.ts     biais news, tendance EMA avec hystérésis, décision BUY / SELL / HOLD
 portfolio.ts    portefeuille papier : ordres au prix réel, frais, P&L par aller-retour
 backtest.ts     rejoue `decide` bougie par bougie : décision à la clôture, exécution à l'ouverture suivante
 history.ts      titres d'époque : captures RSS de la Wayback Machine, jugées par Jev, dans data/history.json
 broker.ts       miroir optionnel : ordres MARKET signés HMAC sur le testnet Binance
-bot.ts          boucles (prix 1 s, bougies et news 60 s), événements, cache du backtest
+bot.ts          boucles (prix 1 s, bougies 60 s, une cadence par source), suivi d'événements, cache du backtest
 server.ts       API Hono locale, flux SSE vers l'interface, fichiers statiques
 public/         interface vanilla JS + TradingView lightweight-charts, sans build
 ```

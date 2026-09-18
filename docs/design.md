@@ -117,3 +117,14 @@ Backtest, stop-loss, WebSocket temps réel, plusieurs stratégies, UI.
   résiduelle +0,03 % à 1 h contre 0,2 % de frais ; amplitude post-parution identique au témoin.
   Les flux RSS de presse sont trop lents pour une stratégie événementielle ; piste suivante :
   sources primaires + validation en papier, en direct.
+
+## v8 — sources primaires et test en direct
+
+- `news.ts` : `SOURCES` = presse (CoinDesk, Cointelegraph, 60 s) + primaires (annonces Binance
+  catalogues 48/161, SEC, Fed, Trump via trumpstruth.org, 30–60 s). CFTC et Coinbase bloquent les
+  robots ; Maison-Blanche écartée (bruit). `state.seen` (3 000 titres) évite de rejuger un titre.
+- Questions Jev élargies : `crypto` inclut les événements macro/politiques qui bougent tout le marché.
+- `events.ts` : `track` (titre vu < 5 min après parution, prix temps réel, retard, sens),
+  `dueReadings` (relevés à +5/+15/+60/+240 min sur bougie 1 min clôturée), `scoreboard`
+  (rendement moyen dans le sens de Jev, fort impact vs autres). Persisté dans `data/events.json`.
+- Aucune stratégie ne trade sur ces événements : on mesure d'abord, en conditions réelles.

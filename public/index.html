@@ -79,6 +79,19 @@
         <p id="replayStats" role="status"></p>
       </section>
 
+      <section class="panel" aria-labelledby="events-title">
+        <h2 id="events-title">Test en direct : le prix bouge-t-il après une news ?</h2>
+        <p class="muted">
+          Chaque titre pertinent capté moins de 5 minutes après sa parution est enregistré avec le prix à l'instant
+          où le bot le voit, puis le prix est relevé à +5 min, +15 min, +1 h et +4 h. Les pourcentages sont comptés
+          dans le sens prédit par Jev : positif, il avait raison. Rien n'est recalculé après coup, c'est une mesure en
+          conditions réelles, à lire après quelques semaines.
+        </p>
+        <p id="sources" class="muted"></p>
+        <p id="eventStats" role="status"></p>
+        <div id="events" class="scroll"></div>
+      </section>
+
       <section class="panel" aria-labelledby="trades-title">
         <h2 id="trades-title">Ordres du bot en direct</h2>
         <div id="trades" class="scroll"></div>

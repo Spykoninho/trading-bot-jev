@@ -13,7 +13,6 @@ export const config = {
   port: Number(env.PORT ?? 3210),
   // --live : chaque ordre papier est aussi envoyé au testnet Binance
   live: process.argv.includes("--live"),
-  newsEverySec: 60,
   candlesEverySec: 60,
   // Suivi de tendance retenu par backtest (3 ans, frais inclus) : voir README
   strategy: {

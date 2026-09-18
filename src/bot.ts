@@ -5,18 +5,25 @@ import { placeMarketOrder } from "./broker.js";
 import { config } from "./config.js";
 import { loadArchive } from "./history.js";
 import { fetchCandles, fetchHistory, startPriceFeed } from "./market.js";
-import { fetchHeadlines } from "./news.js";
+import { dueReadings, scoreboard, track, type TrackedEvent } from "./events.js";
+import { SOURCES, type Source } from "./news.js";
 import { buy, close, equity, newPortfolio, recordEquity, stats, type Trade } from "./portfolio.js";
 import { decide, type Decision } from "./strategy.js";
 
 const STATE_FILE = "data/state.json";
-const MAX_JUDGMENTS = 60;
+const EVENTS_FILE = "data/events.json";
+const MAX_JUDGMENTS = 100;
+const MAX_SEEN = 3000;
+const MAX_EVENTS = 5000;
 
 export const state = {
   portfolio: newPortfolio(config.startCash),
   // Actifs sur lesquels cette simulation investit, choisis à son lancement
   active: [...config.symbols],
   judgments: [] as Judgment[],
+  // Titres déjà jugés, toutes sources confondues : un titre n'est jamais rejugé ni recompté
+  seen: [] as string[],
+  events: [] as TrackedEvent[],
   prices: {} as Record<string, number>,
   closes: {} as Record<string, number[]>,
   signals: {} as Record<string, Decision>,
@@ -35,7 +42,8 @@ export function subscribe(fn: Listener): () => void {
 
 async function persist(): Promise<void> {
   await mkdir("data", { recursive: true });
-  await writeFile(STATE_FILE, JSON.stringify({ portfolio: state.portfolio, active: state.active, judgments: state.judgments }));
+  await writeFile(STATE_FILE, JSON.stringify({ portfolio: state.portfolio, active: state.active, judgments: state.judgments, seen: state.seen }));
+  await writeFile(EVENTS_FILE, JSON.stringify(state.events));
 }
 
 // Miroir optionnel sur le testnet Binance ; un échec n'affecte jamais le portefeuille papier
@@ -81,17 +89,33 @@ async function refreshCandles(): Promise<void> {
   decideAll();
 }
 
-// Jev ne juge que les titres jamais vus : chaque nouvelle news met à jour le biais en ~100 ms
-async function refreshNews(): Promise<void> {
-  const known = new Set(state.judgments.map((j) => j.headline.title));
-  const fresh = (await fetchHeadlines()).filter((h) => !known.has(h.title));
+// Jev ne juge que les titres jamais vus : chaque nouveauté met à jour le biais news et ouvre un événement suivi
+async function pollSource(source: Source): Promise<void> {
+  const known = new Set(state.seen);
+  const fresh = (await source.fetch()).filter((h) => !known.has(h.title));
   if (!fresh.length) return;
+  state.seen = [...state.seen, ...fresh.map((h) => h.title)].slice(-MAX_SEEN);
   const judged = await judgeHeadlines(fresh);
   state.judgments = [...judged, ...state.judgments]
     .sort((a, b) => b.headline.publishedAt.localeCompare(a.headline.publishedAt))
     .slice(0, MAX_JUDGMENTS);
-  console.log(`Jev : ${judged.length} nouveau(x) titre(s) jugé(s)`);
+
+  const tracked = judged.map((j) => track(j, source.kind, state.prices, config.news.minConfidence)).filter((e) => e !== null);
+  state.events = [...state.events, ...tracked].slice(-MAX_EVENTS);
+  console.log(`${source.name} : ${judged.length} nouveau(x) titre(s) jugé(s), ${tracked.length} suivi(s)`);
   emit("news", state.judgments);
+  if (tracked.length) emit("events", eventsView());
+  decideAll();
+}
+
+// Relevé des prix à échéance (+5 min, +15 min, +1 h, +4 h) : on lit la bougie 1 min clôturée, même après un redémarrage
+async function fillReadings(): Promise<void> {
+  const due = dueReadings(state.events);
+  for (const { event, horizon, at } of due) {
+    const [candle] = await fetchCandles(event.symbol, "1m", 1, Math.floor(at / 60_000) * 60_000);
+    if (candle) event.after[horizon] = candle.close;
+  }
+  if (due.length) emit("events", eventsView());
 }
 
 const safely = (task: () => Promise<unknown>) => task().catch((err) => console.error(err));
@@ -101,7 +125,10 @@ export async function start(): Promise<void> {
     const saved = JSON.parse(await readFile(STATE_FILE, "utf8"));
     const positions = Object.values(saved.portfolio?.positions ?? {}) as { cost?: number }[];
     const active = (saved.active ?? []).filter((s: string) => config.symbols.includes(s));
-    if (active.length && positions.every((p) => p.cost !== undefined)) Object.assign(state, { ...saved, active });
+    if (active.length && positions.every((p) => p.cost !== undefined)) Object.assign(state, { ...saved, active, seen: saved.seen ?? [] });
+  } catch {}
+  try {
+    state.events = JSON.parse(await readFile(EVENTS_FILE, "utf8"));
   } catch {}
 
   startPriceFeed(config.symbols, (symbol, price) => {
@@ -111,11 +138,16 @@ export async function start(): Promise<void> {
   setInterval(() => emit("tick", live()), 1000);
   setInterval(() => recordEquity(state.portfolio, state.prices), 5000);
   setInterval(() => safely(persist), 15_000);
-  setInterval(() => safely(refreshNews), config.newsEverySec * 1000);
   setInterval(() => safely(refreshCandles), config.candlesEverySec * 1000);
+  setInterval(() => safely(fillReadings), 60_000);
 
-  await safely(refreshNews);
   await safely(refreshCandles);
+  // Chaque source a sa cadence : la presse toutes les 60 s, les sources primaires toutes les 30 s
+  for (const source of SOURCES) {
+    await safely(() => pollSource(source));
+    setInterval(() => safely(() => pollSource(source)), source.everySec * 1000);
+  }
+  await safely(fillReadings);
 }
 
 // Nouvelle simulation : l'utilisateur choisit les actifs, le bot s'aligne aussitôt sur leur tendance
@@ -164,6 +196,10 @@ export async function runBacktest(): Promise<Comparison> {
   return result;
 }
 
+function eventsView() {
+  return { list: state.events.slice(-300).reverse(), scoreboard: scoreboard(state.events), sources: SOURCES.map((s) => ({ name: s.name, kind: s.kind, everySec: s.everySec })) };
+}
+
 // Instantané léger poussé chaque seconde
 function live() {
   const p = state.portfolio;
@@ -195,6 +231,7 @@ export function view() {
     history: p.history,
     trades: p.trades,
     judgments: state.judgments,
+    events: eventsView(),
     live: live(),
   };
 }

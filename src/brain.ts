@@ -16,27 +16,28 @@ export type Judgment = {
 // Une question = un jugement étroit ; toutes sont évaluées en parallèle sur le même state
 export const questions = {
   // Choice : une option parmi un ensemble fermé, avec une probabilité par option
-  asset: choice("Which asset is this crypto news headline mainly about?", {
+  // `crypto` couvre aussi la macro et la politique : les sources primaires (Fed, SEC, Trump) ne parlent pas toujours de crypto
+  asset: choice("Which asset is this news item mainly about?", {
     BTC: "Bitcoin specifically",
     ETH: "Ethereum specifically",
     SOL: "Solana specifically",
-    crypto: "The crypto market in general, or another coin large enough to move the whole market",
-    unrelated: "Not about crypto markets: sponsored content, tutorials, unrelated topics",
+    crypto: "The crypto market as a whole: general crypto news, another major coin, or a macro or political event likely to move all crypto prices (central bank decision, tariffs, war, major financial regulation)",
+    unrelated: "No plausible effect on crypto prices: sponsored content, tutorials, unrelated politics or topics",
   }),
   // Score : niveaux ordonnés décrits par des situations concrètes, pas par des adjectifs
-  sentiment: score("Expected impact of this headline on the price of the asset it concerns", [
-    "Strongly bearish: hack, exchange collapse, ban, forced liquidations or a large sell-off",
+  sentiment: score("Expected impact of this news item on the price of the asset it concerns", [
+    "Strongly bearish: hack, exchange collapse, ban, forced liquidations, a large sell-off, or a macro shock such as new tariffs or a surprise rate hike",
     "Mildly bearish: negative outlook, regulatory pressure, outflows, delays or downgrades",
     "Neutral: price recap, opinion piece, or no clear direction",
     "Mildly bullish: adoption news, inflows, upgrades or positive analyst outlook",
-    "Strongly bullish: major institutional adoption, ETF approval, favorable law or large treasury purchase",
+    "Strongly bullish: major institutional adoption, ETF approval, favorable law, large treasury purchase, or a macro boost such as a surprise rate cut",
   ]),
   // Noul : probabilité qu'une condition soit vraie (pas de confiance séparée)
   material: noul("Is this news likely to move the market price within the next day?", {
     true: "Concrete event: hack, regulation, ETF flows, large purchase, macro decision",
     false: "Opinion, price recap, sponsored content, tutorial or minor project update",
   }),
-  regulatory_risk: noul("Does this headline report a regulatory or legal action hostile to crypto?"),
+  regulatory_risk: noul("Does this news item report a regulatory or legal action hostile to crypto?"),
 };
 
 type Answers = SystemOneResult<typeof questions>["answers"];

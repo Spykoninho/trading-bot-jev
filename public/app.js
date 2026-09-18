@@ -222,12 +222,13 @@ function renderNews() {
     $("news").replaceChildren(el("p", { class: "empty" }, "Jev n'a encore jugé aucun titre."));
     return;
   }
-  const head = [["Paru"], ["Titre"], ["Actif"], ["Confiance", "num"], ["Sentiment"], ["Impact marché", "num"], ["Risque réglementaire", "num"]];
+  const head = [["Paru"], ["Source"], ["Titre"], ["Actif"], ["Confiance", "num"], ["Sentiment"], ["Impact marché", "num"], ["Risque réglementaire", "num"]];
   const rows = state.judgments.map((j) =>
     el(
       "tr",
       j.asset === "unrelated" || j.assetConfidence < state.config.news.minConfidence ? { class: "ignored" } : {},
       el("td", { class: "nowrap" }, when(j.headline.publishedAt)),
+      el("td", {}, j.headline.source),
       el("td", {}, j.headline.title),
       el("td", {}, j.asset),
       el("td", { class: "num" }, nf(j.assetConfidence)),
@@ -237,6 +238,45 @@ function renderNews() {
     ),
   );
   $("news").replaceChildren(table(head, rows));
+}
+
+const HORIZON_LABELS = { 5: "+5 min", 15: "+15 min", 60: "+1 h", 240: "+4 h" };
+
+function renderEvents() {
+  const { list, scoreboard, sources } = state.events;
+  $("sources").textContent = `Sources sondées : ${sources.map((s) => `${s.name} (${s.kind}, toutes les ${s.everySec} s)`).join(", ")}.`;
+
+  if (!list.length) {
+    $("eventStats").textContent = "";
+    $("events").replaceChildren(el("p", { class: "empty" }, "Aucun titre capté en direct pour l'instant. Dès qu'une source publie un titre pertinent, il apparaît ici avec le prix au moment de la détection."));
+    return;
+  }
+
+  const summary = (label, group) =>
+    `${label} : ${Object.entries(HORIZON_LABELS).map(([h, name]) => (group[h].n ? `${name} ${signed(group[h].mean * 100, 3)} % (${group[h].wins}/${group[h].n})` : `${name} en attente`)).join(", ")}.`;
+  $("eventStats").textContent = `${scoreboard.tracked} titres captés en direct depuis le ${when(list.at(-1).seenAt)}, retard médian ${scoreboard.medianLatencySec} s. ${summary("Fort impact selon Jev", scoreboard.groups.fort)} ${summary("Autres", scoreboard.groups.autres)} Entre parenthèses : cas où le prix a suivi Jev.`;
+
+  const head = [["Vu à"], ["Source"], ["Retard", "num"], ["Titre"], ["Actif"], ["Avis de Jev"], ["Impact", "num"], ...Object.values(HORIZON_LABELS).map((name) => [name, "num"])];
+  const rows = list.map((e) => {
+    const readings = Object.keys(HORIZON_LABELS).map((h) => {
+      if (e.after[h] === undefined) return el("td", { class: "num" }, "…");
+      const r = e.direction * (e.after[h] / e.priceAtSeen - 1);
+      return el("td", { class: `num ${r >= 0 ? "up" : "down"}` }, `${signed(r * 100)} %`);
+    });
+    return el(
+      "tr",
+      {},
+      el("td", { class: "nowrap" }, when(e.seenAt)),
+      el("td", {}, e.judgment.headline.source),
+      el("td", { class: "num nowrap" }, `${e.latencySec} s`),
+      el("td", {}, e.judgment.headline.title),
+      el("td", {}, base(e.symbol)),
+      el("td", {}, el("span", { class: `action ${e.direction > 0 ? "up" : "down"}` }, `${e.direction > 0 ? "▲" : "▼"} ${signed(e.judgment.sentiment)}`)),
+      el("td", { class: "num" }, nf(e.judgment.material)),
+      ...readings,
+    );
+  });
+  $("events").replaceChildren(table(head, rows));
 }
 
 function segmented(container, options, selected, onPick) {
@@ -353,6 +393,7 @@ async function load() {
   loadEquity();
   renderTrades();
   renderNews();
+  renderEvents();
   renderLive(state.live);
   await loadCandles(true);
 }
@@ -385,6 +426,10 @@ async function init() {
   stream.addEventListener("news", (e) => {
     state.judgments = JSON.parse(e.data);
     renderNews();
+  });
+  stream.addEventListener("events", (e) => {
+    state.events = JSON.parse(e.data);
+    renderEvents();
   });
   stream.addEventListener("reset", load);
   stream.onopen = () => notify("");
