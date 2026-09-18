@@ -168,7 +168,8 @@ function renderSignal(symbol, d, price) {
 
 function renderLive(live) {
   $("feed").className = `feed${live.feedOk ? " ok" : ""}`;
-  $("feed").textContent = live.feedOk ? `Prix Binance en direct, ${clock(live.time)}. Décisions à chaque clôture de bougie ${state.config.strategy.interval}.` : "Flux de prix interrompu, reconnexion…";
+  const mode = { paper: "Portefeuille papier", testnet: "Ordres répliqués sur le testnet Binance", real: "ORDRES RÉELS sur Binance" }[state.config.mode];
+  $("feed").textContent = live.feedOk ? `${mode}. Prix en direct, ${clock(live.time)}.` : "Flux de prix interrompu, reconnexion…";
 
   $("equity").replaceChildren(nf(live.equity), el("small", {}, " USDT"));
   $("pnl").className = `delta ${live.pnl >= 0 ? "up" : "down"}`;

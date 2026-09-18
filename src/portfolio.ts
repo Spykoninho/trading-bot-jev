@@ -1,7 +1,7 @@
 import type { Side } from "./broker.js";
 
-// `exitAt` : sortie programmée, utilisée par le circuit événementiel
-export type Position = { symbol: string; qty: number; entryPrice: number; entryTime: string; cost: number; exitAt?: string };
+// `exitAt` : sortie programmée du circuit événementiel ; `exchangeQty` : quantité réellement détenue sur l'exchange (--live, --real)
+export type Position = { symbol: string; qty: number; entryPrice: number; entryTime: string; cost: number; exitAt?: string; exchangeQty?: number };
 
 export type Trade = {
   time: string;
@@ -13,6 +13,7 @@ export type Trade = {
   fee: number;
   reason: string;
   pnl?: number;
+  exchangeQty?: number;
 };
 
 type EquityPoint = { time: string; equity: number };
@@ -68,7 +69,7 @@ export function close(p: Portfolio, o: Order, now = new Date()): Trade | null {
   const fee = gross * o.fee;
   p.cash += gross - fee;
   delete p.positions[slot(o)];
-  return record(p, { time: now.toISOString(), symbol: o.symbol, side: "SELL", qty: pos.qty, price: o.price, usdt: gross, fee, reason: o.reason, pnl: gross - fee - pos.cost });
+  return record(p, { time: now.toISOString(), symbol: o.symbol, side: "SELL", qty: pos.qty, price: o.price, usdt: gross, fee, reason: o.reason, pnl: gross - fee - pos.cost, exchangeQty: pos.exchangeQty });
 }
 
 export function recordEquity(p: Portfolio, prices: Record<string, number>, now = new Date()): void {

@@ -1,13 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { backtest, type BacktestResult } from "./backtest.js";
 import { judgeHeadlines, type Judgment } from "./brain.js";
-import { placeMarketOrder } from "./broker.js";
+import { marketBuy, marketSell } from "./broker.js";
 import { config } from "./config.js";
 import { loadArchive } from "./history.js";
 import { fetchCandles, fetchHistory, startPriceFeed } from "./market.js";
 import { dueReadings, matchRule, scoreboard, track, type TrackedEvent } from "./events.js";
 import { SOURCES, headlineKey, type Source } from "./news.js";
-import { buy, close, equity, newPortfolio, recordEquity, stats, type Trade } from "./portfolio.js";
+import { buy, close, equity, newPortfolio, recordEquity, stats, type Position, type Trade } from "./portfolio.js";
 import { decide, type Decision } from "./strategy.js";
 
 const STATE_FILE = "data/state.json";
@@ -51,10 +51,13 @@ async function persist(): Promise<void> {
   await writeFile(EVENTS_FILE, JSON.stringify(state.events));
 }
 
-// Miroir optionnel sur le testnet Binance ; un échec n'affecte jamais le portefeuille papier
-function mirror(trade: Trade): void {
-  if (!config.live) return;
-  placeMarketOrder(trade.symbol, trade.side, trade.usdt * 0.98).catch((err: Error) => console.error(`testnet: ${err.message}`));
+// Réplique l'ordre papier sur l'exchange ; on retient la quantité réellement achetée pour revendre exactement celle-là
+function mirror(trade: Trade, position?: Position): void {
+  if (!config.exchange) return;
+  const failed = (err: Error) => console.error(`exchange : ${trade.side} ${trade.symbol} non exécuté (${err.message})`);
+  if (trade.side === "BUY") marketBuy(trade.symbol, trade.usdt).then((qty) => position && (position.exchangeQty = qty), failed);
+  else if (trade.exchangeQty) marketSell(trade.symbol, trade.exchangeQty).catch(failed);
+  else console.error(`exchange : rien à vendre sur ${trade.symbol}, la position n'avait pas été achetée sur l'exchange`);
 }
 
 function act(d: Decision): void {
@@ -68,7 +71,7 @@ function act(d: Decision): void {
 function announce(trade: Trade | null): void {
   if (!trade) return;
   console.log(`${trade.side} ${trade.symbol} ${trade.usdt.toFixed(2)} USDT @ ${trade.price} — ${trade.reason}`);
-  mirror(trade);
+  mirror(trade, Object.values(state.portfolio.positions).find((pos) => pos.entryTime === trade.time));
   emit("trade", trade);
 }
 
@@ -121,6 +124,10 @@ async function refreshCandles(): Promise<void> {
   decideAll(closed.some(Boolean));
 }
 
+// Une seule entrée par publication, les plus récentes d'abord
+const latest = (judgments: Judgment[]) =>
+  [...new Map(judgments.map((j) => [headlineKey(j.headline), j])).values()].sort((a, b) => b.headline.publishedAt.localeCompare(a.headline.publishedAt)).slice(0, MAX_JUDGMENTS);
+
 // Jev ne juge que les titres jamais vus : chaque nouveauté met à jour le biais news et ouvre un événement suivi
 async function pollSource(source: Source): Promise<void> {
   const known = new Set(state.seen);
@@ -130,8 +137,7 @@ async function pollSource(source: Source): Promise<void> {
   // Texte complet récupéré pour les seuls titres nouveaux ; en cas d'échec, Jev juge le titre
   if (source.fetchBody) for (const h of fresh) h.body = await source.fetchBody(h).catch(() => undefined);
   const judged = await judgeHeadlines(fresh);
-  const merged = new Map([...state.judgments, ...judged].map((j) => [headlineKey(j.headline), j]));
-  state.judgments = [...merged.values()].sort((a, b) => b.headline.publishedAt.localeCompare(a.headline.publishedAt)).slice(0, MAX_JUDGMENTS);
+  state.judgments = latest([...state.judgments, ...judged]);
 
   const tracked = judged.map((j) => track(j, source.kind, state.prices, config.news.minConfidence)).filter((e) => e !== null);
   state.events = [...state.events, ...tracked].slice(-MAX_EVENTS);
@@ -162,6 +168,7 @@ export async function start(): Promise<void> {
     if (active.length && positions.every((p) => p.cost !== undefined)) Object.assign(state, { ...saved, active, seen: saved.seen ?? [] });
     // Positions sauvegardées avant l'ajout du champ `symbol` : la clé était le symbole
     for (const [key, pos] of Object.entries(state.portfolio.positions)) pos.symbol ??= key;
+    state.judgments = latest(state.judgments);
   } catch {}
   try {
     state.events = JSON.parse(await readFile(EVENTS_FILE, "utf8"));
@@ -191,6 +198,8 @@ export async function start(): Promise<void> {
 export async function reset(symbols: string[]): Promise<void> {
   const active = config.symbols.filter((s) => symbols.includes(s));
   if (!active.length) throw new Error("Choisis au moins un actif.");
+  // Repartir de zéro en papier alors que l'exchange détient encore des positions désynchroniserait les deux
+  if (Object.values(state.portfolio.positions).some((pos) => pos.exchangeQty)) throw new Error("Des positions sont ouvertes sur l'exchange : attends leur vente ou vends-les sur Binance avant de recommencer.");
   state.active = active;
   state.portfolio = newPortfolio(config.startCash);
   state.waits = [];
@@ -262,7 +271,7 @@ function live() {
 export function view() {
   const p = state.portfolio;
   return {
-    config: { symbols: config.symbols, fee: config.fee, live: config.live, strategy: config.strategy, news: config.news, eventRules: config.eventRules, backtestYears: config.backtestYears },
+    config: { symbols: config.symbols, fee: config.fee, mode: config.exchange ? (config.exchange.real ? "real" : "testnet") : "paper", strategy: config.strategy, news: config.news, eventRules: config.eventRules, backtestYears: config.backtestYears },
     active: state.active,
     startedAt: p.startedAt,
     startCash: p.startCash,

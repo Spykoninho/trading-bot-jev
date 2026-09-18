@@ -3,6 +3,13 @@ try {
 } catch {}
 
 const env = process.env;
+const flag = (name: string) => process.argv.includes(name);
+
+// papier par défaut ; --live réplique les ordres sur le testnet Binance ; --real les envoie sur Binance réel
+const EXCHANGES = {
+  testnet: { url: "https://testnet.binance.vision", key: env.BINANCE_TESTNET_KEY ?? "", secret: env.BINANCE_TESTNET_SECRET ?? "", real: false },
+  real: { url: "https://api.binance.com", key: env.BINANCE_KEY ?? "", secret: env.BINANCE_SECRET ?? "", real: true },
+};
 
 export const config = {
   // Actifs proposés à chaque nouvelle simulation ; chacun a son option dans la question `asset` de Jev (brain.ts)
@@ -11,8 +18,7 @@ export const config = {
   startCash: Number(env.START_CASH ?? 1000),
   fee: Number(env.FEE ?? 0.001),
   port: Number(env.PORT ?? 3210),
-  // --live : chaque ordre papier est aussi envoyé au testnet Binance
-  live: process.argv.includes("--live"),
+  exchange: flag("--real") ? EXCHANGES.real : flag("--live") ? EXCHANGES.testnet : null,
   candlesEverySec: 60,
   // Suivi de tendance retenu par backtest (3 ans, frais inclus) : voir README
   strategy: {
@@ -34,9 +40,6 @@ export const config = {
   binance: {
     data: "https://api.binance.com",
     stream: "wss://stream.binance.com:9443",
-    testnet: "https://testnet.binance.vision",
-    key: env.BINANCE_TESTNET_KEY ?? "",
-    secret: env.BINANCE_TESTNET_SECRET ?? "",
   },
 };
 

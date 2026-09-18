@@ -33,6 +33,13 @@ describe("close", () => {
     expect(p.cash).toBeCloseTo(900 + gross * 0.999);
   });
 
+  it("hands the quantity really held on the exchange over to the closing trade", () => {
+    const p = newPortfolio(1000);
+    buy(p, { ...order, usdt: 100 });
+    p.positions.BTCUSDT!.exchangeQty = 0.00199;
+    expect(close(p, order)?.exchangeQty).toBe(0.00199);
+  });
+
   it("returns null without a position", () => {
     expect(close(newPortfolio(1000), order)).toBeNull();
   });

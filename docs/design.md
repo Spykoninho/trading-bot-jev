@@ -70,7 +70,19 @@ dans un livre de positions séparé (`event:<symbole>`), sur une réserve de 10 
 sortie programmée. Une seule règle, celle que l'étude soutient : soutien crypto de Trump ≥ 0,8,
 revente après 4 h. À confirmer par le test en direct avant d'en ajouter d'autres.
 
-## 6. Pièges rencontrés
+## 6. Exécution sur un exchange
+
+Le portefeuille papier reste la source de vérité de l'interface ; `--live` (testnet) et `--real`
+(Binance réel) répliquent chaque ordre avec la même API, seuls l'URL et les clés changent. Le
+bot retient la quantité réellement reçue à l'achat (`executedQty` moins les frais prélevés sur
+l'actif) et ne revend que celle-là, arrondie vers le bas au pas `LOT_SIZE` : il ne touche jamais
+au reste du compte. Garde-fous : `--real` exige des clés dédiées et `START_CASH` explicite ; une
+nouvelle simulation est refusée tant que des positions sont ouvertes sur l'exchange. Validé sur
+le testnet (achat puis revente exacte sur BTC et SOL), jamais exécuté en réel par le développement.
+
+Chaque clôture de bougie consigne la décision de chaque actif, « attendre » compris (`state.waits`).
+
+## 7. Pièges rencontrés
 
 - Identifier une publication par son seul titre fusionnait les huit « Federal Reserve issues FOMC
   statement » annuels et aurait fait ignorer le suivant en direct : identité = titre + date.
