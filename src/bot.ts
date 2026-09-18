@@ -6,7 +6,7 @@ import { config } from "./config.js";
 import { loadArchive } from "./history.js";
 import { fetchCandles, fetchHistory, startPriceFeed } from "./market.js";
 import { dueReadings, scoreboard, track, type TrackedEvent } from "./events.js";
-import { SOURCES, type Source } from "./news.js";
+import { SOURCES, headlineKey, type Source } from "./news.js";
 import { buy, close, equity, newPortfolio, recordEquity, stats, type Trade } from "./portfolio.js";
 import { decide, type Decision } from "./strategy.js";
 
@@ -21,7 +21,7 @@ export const state = {
   // Actifs sur lesquels cette simulation investit, choisis à son lancement
   active: [...config.symbols],
   judgments: [] as Judgment[],
-  // Titres déjà jugés, toutes sources confondues : un titre n'est jamais rejugé ni recompté
+  // Publications déjà jugées (titre + date de parution), toutes sources confondues : jamais rejugées ni recomptées
   seen: [] as string[],
   events: [] as TrackedEvent[],
   prices: {} as Record<string, number>,
@@ -92,9 +92,9 @@ async function refreshCandles(): Promise<void> {
 // Jev ne juge que les titres jamais vus : chaque nouveauté met à jour le biais news et ouvre un événement suivi
 async function pollSource(source: Source): Promise<void> {
   const known = new Set(state.seen);
-  const fresh = (await source.fetch()).filter((h) => !known.has(h.title));
+  const fresh = (await source.fetch()).filter((h) => !known.has(headlineKey(h)));
   if (!fresh.length) return;
-  state.seen = [...state.seen, ...fresh.map((h) => h.title)].slice(-MAX_SEEN);
+  state.seen = [...state.seen, ...fresh.map(headlineKey)].slice(-MAX_SEEN);
   // Texte complet récupéré pour les seuls titres nouveaux ; en cas d'échec, Jev juge le titre
   if (source.fetchBody) for (const h of fresh) h.body = await source.fetchBody(h).catch(() => undefined);
   const judged = await judgeHeadlines(fresh);

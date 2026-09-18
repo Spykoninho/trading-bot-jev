@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { judgeHeadlines, judgeVersion, type Judgment } from "./brain.js";
 import { config } from "./config.js";
-import { FEEDS, HEADERS, fedBody, parseRss, plain, type Headline } from "./news.js";
+import { FEEDS, HEADERS, fedBody, headlineKey, parseRss, plain, type Headline } from "./news.js";
 
 // Archive des titres d'époque, avec les mêmes noms de sources que le direct
 const FILE = "data/history.json";
@@ -35,9 +35,9 @@ async function save(archive: Archive): Promise<void> {
 // Ajoute un titre, ou complète un titre déjà connu avec son texte et son lien
 function upsert(archive: Archive, index: Map<string, Headline>, h: Headline, from: Date): void {
   if (!h.title || Date.parse(h.publishedAt) < from.getTime()) return;
-  const known = index.get(h.title);
+  const known = index.get(headlineKey(h));
   if (known) return void Object.assign(known, { body: known.body ?? h.body, link: known.link ?? h.link });
-  index.set(h.title, h);
+  index.set(headlineKey(h), h);
   archive.headlines.push(h);
 }
 
@@ -72,7 +72,7 @@ async function pool<T>(items: T[], size: number, worker: (item: T) => Promise<vo
 }
 
 async function collectHeadlines(archive: Archive, from: Date): Promise<void> {
-  const index = new Map(archive.headlines.map((h) => [h.title, h]));
+  const index = new Map(archive.headlines.map((h) => [headlineKey(h), h]));
   for (const [source, { url: feedUrl, withBody }] of Object.entries(WAYBACK_FEEDS)) {
     // Des titres archivés sans leur texte : on retélécharge les captures de cette source pour le récupérer
     const incomplete = withBody && archive.headlines.some((h) => h.source === source && !h.body);
@@ -123,7 +123,7 @@ async function getJson<T>(url: string): Promise<T> {
 
 // Sources primaires qui publient leur propre archive horodatée : Fed, posts de Trump, annonces Binance
 async function collectPrimary(archive: Archive, from: Date): Promise<void> {
-  const index = new Map(archive.headlines.map((h) => [h.title, h]));
+  const index = new Map(archive.headlines.map((h) => [headlineKey(h), h]));
 
   const fed = await getJson<{ d?: string; t?: string; l?: string }[]>(FED_INDEX);
   for (const item of fed) if (item.d && item.t) upsert(archive, index, { title: item.t.trim(), source: "Fed (communiqués)", publishedAt: easternToIso(item.d), link: item.l }, from);
@@ -157,12 +157,13 @@ async function collectPrimary(archive: Archive, from: Date): Promise<void> {
 
 // Mêmes questions et même state que le direct. Un jugement est refait quand les questions de sa source ont changé de version.
 async function judgeArchive(archive: Archive): Promise<void> {
-  const current = new Map(archive.judgments.map((j) => [j.headline.title, j]));
-  const todo = archive.headlines.filter((h) => (current.get(h.title)?.version ?? (current.has(h.title) ? 1 : 0)) < judgeVersion(h.source));
-  console.log(`Jev : ${todo.length} titres à juger (${current.size - todo.filter((h) => current.has(h.title)).length} à jour)`);
+  const current = new Map(archive.judgments.map((j) => [headlineKey(j.headline), j]));
+  const version = (h: Headline) => current.get(headlineKey(h))?.version ?? (current.has(headlineKey(h)) ? 1 : 0);
+  const todo = archive.headlines.filter((h) => version(h) < judgeVersion(h.source));
+  console.log(`Jev : ${todo.length} titres à juger (${archive.headlines.length - todo.length} à jour)`);
   for (let i = 0; i < todo.length; i += 16) {
     try {
-      for (const j of await judgeHeadlines(todo.slice(i, i + 16))) current.set(j.headline.title, j);
+      for (const j of await judgeHeadlines(todo.slice(i, i + 16))) current.set(headlineKey(j.headline), j);
     } catch (err) {
       console.error(`lot ${i} ignoré, relancer pour le reprendre : ${(err as Error).message}`);
     }

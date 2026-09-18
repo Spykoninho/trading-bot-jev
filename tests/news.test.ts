@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dedupe, parseRss } from "../src/news.js";
+import { dedupe, headlineKey, parseRss } from "../src/news.js";
 
 const xml = `<?xml version="1.0"?>
 <rss><channel>
@@ -25,6 +25,14 @@ describe("parseRss with body", () => {
       { title: "I am hereby raising...", source: "Trump", publishedAt: "2025-04-09T17:18:00.000Z", body: "I am hereby raising tariffs. I have authorized a 90 day PAUSE." },
     ]);
     expect(parseRss(feed, "Trump")[0]?.body).toBeUndefined();
+  });
+});
+
+describe("headlineKey", () => {
+  it("tells apart recurring titles published on different dates", () => {
+    const fomc = (publishedAt: string) => ({ title: "Federal Reserve issues FOMC statement", source: "Fed", publishedAt });
+    expect(headlineKey(fomc("2026-07-29T18:00:00.000Z"))).not.toBe(headlineKey(fomc("2026-09-16T18:00:00.000Z")));
+    expect(headlineKey(fomc("2026-09-16T18:00:00.000Z"))).toBe(headlineKey(fomc("2026-09-16T18:00:00.000Z")));
   });
 });
 

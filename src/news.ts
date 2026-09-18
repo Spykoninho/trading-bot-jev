@@ -43,6 +43,9 @@ export function parseRss(xml: string, source: string, withBody = false): Headlin
     .map(({ body, link, ...h }) => ({ ...h, publishedAt: h.publishedAt.toISOString(), ...(link ? { link } : {}), ...(body ? { body } : {}) }));
 }
 
+// Identité d'une publication : le titre seul ne suffit pas, la Fed réutilise « Federal Reserve issues FOMC statement »
+export const headlineKey = (h: Headline) => `${h.title}|${h.publishedAt}`;
+
 export function dedupe(headlines: Headline[]): Headline[] {
   const seen = new Set<string>();
   return headlines.filter((h) => !seen.has(h.title.toLowerCase()) && seen.add(h.title.toLowerCase()));
