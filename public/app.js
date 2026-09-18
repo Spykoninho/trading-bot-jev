@@ -258,42 +258,54 @@ function segmented(container, options, selected, onPick) {
 // ---------- Replay du backtest ----------
 
 const FRAME_MS = 50;
-const replay = { data: null, chart: null, index: 0, speed: 5, timer: null, strategy: null, hold: null, markers: null };
+const replay = { data: null, chart: null, index: 0, speed: 5, timer: null, jev: null, plain: null, hold: null, markers: null };
 
 function setupReplay() {
   replay.chart = createChart($("replayChart"), false);
-  replay.hold = replay.chart.addSeries(LW.LineSeries, { color: css("--muted"), lineWidth: 2, priceLineVisible: false });
-  replay.strategy = replay.chart.addSeries(LW.LineSeries, { color: css("--accent"), lineWidth: 2, priceLineVisible: false });
-  replay.markers = LW.createSeriesMarkers(replay.strategy, []);
+  const line = (color) => replay.chart.addSeries(LW.LineSeries, { color, lineWidth: 2, priceLineVisible: false });
+  replay.hold = line(css("--muted"));
+  replay.plain = line(css("--plain"));
+  replay.jev = line(css("--accent"));
 }
 
 function replayStep() {
-  const { times, strategy, hold, trades, stats } = replay.data;
+  const { times, hold, holdStats, plain, jev, news } = replay.data;
+  // Les flèches suivent la variante principale : avec Jev si les titres d'époque sont disponibles
+  const main = jev ?? plain;
+  const lines = [[replay.hold, hold], [replay.plain, plain.curve], ...(jev ? [[replay.jev, jev.curve]] : [])];
   // speed = nombre de bougies révélées par image ; Infinity affiche tout d'un coup
   const end = Math.min(times.length, replay.index + replay.speed);
-  if (end - replay.index > 500) {
-    replay.strategy.setData(times.slice(0, end).map((t, i) => ({ time: sec(t), value: strategy[i] })));
-    replay.hold.setData(times.slice(0, end).map((t, i) => ({ time: sec(t), value: hold[i] })));
-  } else {
-    for (let i = replay.index; i < end; i++) {
-      replay.strategy.update({ time: sec(times[i]), value: strategy[i] });
-      replay.hold.update({ time: sec(times[i]), value: hold[i] });
-    }
+  for (const [series, curve] of lines) {
+    if (end - replay.index > 500) series.setData(times.slice(0, end).map((t, i) => ({ time: sec(t), value: curve[i] })));
+    else for (let i = replay.index; i < end; i++) series.update({ time: sec(times[i]), value: curve[i] });
   }
   replay.index = end;
   const now = times[end - 1];
-  const done = trades.filter((t) => Date.parse(t.time) <= now);
+  const done = main.trades.filter((t) => Date.parse(t.time) <= now);
+  replay.markers ??= LW.createSeriesMarkers(jev ? replay.jev : replay.plain, []);
   replay.markers.setMarkers(done.map((t) => tradeMarker(t, sec(Date.parse(t.time)))));
   replay.chart.timeScale().fitContent();
 
-  const pct = (n) => `${signed(n * 100, 1)} %`;
   const assets = replay.data.symbols.map(base).join(" + ");
+  const pct = (n) => `${signed(n * 100, 1)} %`;
   if (end < times.length) {
-    $("replayStats").textContent = `${assets}, ${day(now)} : stratégie ${nf(strategy[end - 1])} USDT, acheter et garder ${nf(hold[end - 1])} USDT, ${done.length} ordres.`;
+    const live = [jev && `avec Jev ${nf(jev.curve[end - 1])}`, `sans news ${nf(plain.curve[end - 1])}`, `acheter et garder ${nf(hold[end - 1])}`].filter(Boolean).join(", ");
+    $("replayStats").textContent = `${assets}, ${day(now)} : ${live} USDT, ${done.length} ordres.`;
     return;
   }
   clearInterval(replay.timer);
-  $("replayStats").textContent = `${assets}, du ${day(times[0])} au ${day(now)} : stratégie ${pct(stats.strategyReturn)} (pire creux −${nf(stats.strategyDrawdown * 100, 0)} %), acheter et garder ${pct(stats.holdReturn)} (pire creux −${nf(stats.holdDrawdown * 100, 0)} %). ${stats.closed} allers-retours dont ${stats.wins} gagnants, ${nf(stats.fees)} USDT de frais : le suivi de tendance perd souvent un peu et gagne rarement beaucoup. Un résultat passé ne garantit rien pour la suite.`;
+  const line = (label, s) => `${label} ${pct(s.strategyReturn)} (pire creux −${nf(s.strategyDrawdown * 100, 0)} %, ${s.closed} allers-retours dont ${s.wins} gagnants, ${nf(s.fees)} USDT de frais)`;
+  const parts = [
+    `${assets}, du ${day(times[0])} au ${day(now)}.`,
+    jev ? `${line("Avec Jev :", jev.stats)}.` : "",
+    `${line("Sans news :", plain.stats)}.`,
+    `Acheter et garder : ${pct(holdStats.return)} (pire creux −${nf(holdStats.drawdown * 100, 0)} %).`,
+    jev
+      ? `Jev a jugé ${nf(news.headlines, 0)} titres d'époque, qui couvrent ${news.daysCovered} jours sur ${news.days} ; les autres jours, les deux variantes décident à l'identique.`
+      : "Pas encore de titres d'époque : lance « npm run history » pour comparer avec et sans Jev.",
+    "Un résultat passé ne garantit rien pour la suite.",
+  ];
+  $("replayStats").textContent = parts.filter(Boolean).join(" ");
 }
 
 function playReplay() {
@@ -310,8 +322,8 @@ async function startReplay() {
   $("replayLegend").hidden = false;
   if (!replay.chart) setupReplay();
   replay.index = 0;
-  replay.strategy.setData([]);
-  replay.hold.setData([]);
+  for (const series of [replay.jev, replay.plain, replay.hold]) series.setData([]);
+  $("keyJev").hidden = !replay.data.jev;
   playReplay();
 }
 
@@ -334,9 +346,9 @@ async function load() {
   // Le replay dépend des actifs choisis : on le recalcule à la prochaine lecture
   clearInterval(replay.timer);
   replay.data = null;
-  replay.strategy?.setData([]);
-  replay.hold?.setData([]);
-  replay.markers?.setMarkers([]);
+  for (const series of [replay.jev, replay.plain, replay.hold]) series?.setData([]);
+  replay.markers?.detach();
+  replay.markers = null;
   $("replayStats").textContent = "";
   loadEquity();
   renderTrades();

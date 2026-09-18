@@ -10,6 +10,7 @@
   --axis: #383835;
   --border: rgba(255, 255, 255, 0.1);
   --accent: #3987e5;
+  --plain: #d95926;
   --up: #26a69a;
   --down: #ef5350;
   --neutral: #383835;
@@ -396,8 +397,12 @@ button.primary:hover {
   border-top: 2px solid var(--muted);
 }
 
-.key.strategy {
+.key.jev {
   border-color: var(--accent);
+}
+
+.key.plain {
+  border-color: var(--plain);
 }
 
 [hidden] {

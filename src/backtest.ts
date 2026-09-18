@@ -1,3 +1,4 @@
+import type { Judgment } from "./brain.js";
 import { config, type Config } from "./config.js";
 import type { Candle } from "./market.js";
 import { buy, close, equity, newPortfolio, stats, type Trade } from "./portfolio.js";
@@ -23,9 +24,11 @@ function maxDrawdown(curve: number[]): number {
   return worst;
 }
 
+const NEWS_WINDOW_MS = 24 * 3_600_000;
+
 // Rejoue la décision du live bougie par bougie : décision à la clôture, exécution à l'ouverture suivante, frais inclus.
-// Sans historique de news, le biais Jev vaut 0 : seul le volet prix de la stratégie est évalué.
-export function backtest(history: Record<string, Candle[]>, cfg: BacktestConfig = config): BacktestResult {
+// `judgments` (triés par date) = titres d'époque jugés par Jev ; sans eux, seul le volet prix de la stratégie est évalué.
+export function backtest(history: Record<string, Candle[]>, cfg: BacktestConfig = config, judgments: Judgment[] = []): BacktestResult {
   const symbols = Object.keys(history);
   const length = Math.min(...symbols.map((s) => history[s]!.length));
   const series = Object.fromEntries(symbols.map((s) => [s, history[s]!.slice(-length)]));
@@ -36,12 +39,20 @@ export function backtest(history: Record<string, Candle[]>, cfg: BacktestConfig 
   const share = (cfg.startCash / symbols.length) * (1 - cfg.fee);
   const result: BacktestResult = { times: [], strategy: [], hold: [], trades: p.trades, stats: {} as BacktestResult["stats"] };
 
+  const published = judgments.map((j) => Date.parse(j.headline.publishedAt));
+  let from = 0;
+  let to = 0;
+
   for (let i = start - 1; i < length - 1; i++) {
     const opens = Object.fromEntries(symbols.map((s) => [s, series[s]![i + 1]!.open]));
     const time = new Date(series[symbols[0]!]![i + 1]!.time);
+    // Pas de regard vers le futur : seuls les titres parus avant la décision, sur 24 h glissantes, sont visibles
+    while (to < published.length && published[to]! <= time.getTime()) to++;
+    while (from < to && published[from]! < time.getTime() - NEWS_WINDOW_MS) from++;
+    const visible = judgments.slice(from, to);
     for (const symbol of symbols) {
       const closes = series[symbol]!.slice(Math.max(0, i + 1 - cfg.strategy.window), i + 1).map((c) => c.close);
-      const d = decide({ symbol, closes, judgments: [], position: p.positions[symbol], now: time.getTime() }, cfg);
+      const d = decide({ symbol, closes, judgments: visible, position: p.positions[symbol], now: time.getTime() }, cfg);
       const order = { symbol, price: opens[symbol]!, fee: cfg.fee, reason: d.reason };
       if (d.action === "BUY") buy(p, { ...order, usdt: equity(p, opens) / symbols.length }, time);
       else if (d.action === "SELL") close(p, order, time);

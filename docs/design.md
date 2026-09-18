@@ -95,3 +95,15 @@ Backtest, stop-loss, WebSocket temps réel, plusieurs stratégies, UI.
   simulation » (`POST /api/reset {symbols}`), persistés ; capital réparti entre eux.
 - Les tendances sont calculées pour tous les actifs, le bot n'agit que sur les actifs retenus ;
   le backtest/replay est mis en cache par sélection.
+
+## v6 — mesure de l'apport de Jev sur l'historique
+
+- Source des titres d'époque : captures RSS CoinDesk/Cointelegraph de la Wayback Machine (CDX,
+  une capture par jour, suffixe `id_` pour le XML brut). API d'actualités écartées (clé requise),
+  sitemap Cointelegraph écarté (dates `lastmod` faussées par une migration du site).
+- `history.ts` : collecte + jugement Jev reprenables, `data/history.json` (non versionné).
+- `backtest(history, cfg, judgments)` : fenêtre glissante de 24 h de titres parus avant chaque
+  décision, test anti-regard-vers-le-futur. `GET /api/backtest` renvoie `plain`, `jev`, `hold`
+  et la couverture ; le replay trace les trois courbes.
+- Résultat : +196,6 % avec Jev contre +193,4 % sans ; effet faible, non homogène par actif.
+  `newsTilt` laissé à 0,5 % pour ne pas sur-ajuster sur la même période.

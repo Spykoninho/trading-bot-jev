@@ -27,7 +27,8 @@ cp .env.example .env   # puis remplir TYPESAFE_API_KEY
 ```bash
 npm start             # bot + interface sur http://localhost:3210
 npm start -- --live   # idem, chaque ordre papier est aussi envoyé au testnet Binance
-npm run backtest      # backtest 3 ans en console
+npm run history       # récupère les titres d'époque (Wayback Machine) et les fait juger par Jev
+npm run backtest      # backtest 3 ans en console : avec Jev, sans news, acheter et garder
 npm test
 npm run typecheck
 ```
@@ -63,7 +64,29 @@ entre les deux      on ne change rien (hystérésis contre les faux signaux)
 
 **Rôle de Jev** : le biais news décale les deux seuils d'au plus ±0,5 % (news positives :
 entrée plus tôt, sortie plus tard), et un risque réglementaire récent et fort bloque tout achat.
-Ce volet n'est pas backtesté, faute d'historique de titres.
+
+### Avec ou sans TypeSafe : la mesure
+
+`npm run history` retrouve les titres d'époque dans les captures des flux RSS CoinDesk et
+Cointelegraph de la Wayback Machine (27 535 titres, 850 jours couverts sur 1 028), les fait
+juger par Jev avec les mêmes questions que le direct (≈ 0,8 $ de crédits, 20 min), puis le
+backtest les rejoue sans regard vers le futur : à chaque décision, seuls les titres déjà parus
+dans les 24 h sont visibles. Résultat sur BTC + ETH + SOL, 3 ans, frais inclus :
+
+| Variante | Rendement | Pire creux | Allers-retours |
+| --- | --- | --- | --- |
+| Stratégie **avec Jev** | **+196,6 %** | −31,0 % | 135 |
+| Stratégie sans news | +193,4 % | −31,3 % | 122 |
+| Acheter et garder | +68,2 % | −64,6 % | – |
+
+Lecture honnête : l'apport est **positif mais faible** (+3 points), et il vient surtout du
+décalage des seuils (+2,3) plus que du veto réglementaire (+0,8). Il grandit quand on donne plus
+de poids aux news (jusqu'à +13 points avec un décalage de 2 %, puis il se dégrade à 3 %), mais il
+n'est pas homogène : −2,8 points sur BTC seul, +0,6 sur ETH, +8,7 sur SOL. Sur ~130 ordres, un
+tel écart reste compatible avec du bruit. Conclusion : sur une stratégie lente pilotée par le
+prix, les titres de presse changent peu la décision ; Jev y sert de garde-fou et de contexte
+lisible, pas de moteur de performance. Deux limites de la mesure : on ne juge que le titre, pas
+l'article, et un modèle entraîné après coup peut connaître la suite de certains événements.
 
 Tout se règle dans `src/config.ts`.
 
@@ -92,6 +115,7 @@ brain.ts        1 requête TypeSafe par titre : asset, sentiment, material, regu
 strategy.ts     biais news, tendance EMA avec hystérésis, décision BUY / SELL / HOLD
 portfolio.ts    portefeuille papier : ordres au prix réel, frais, P&L par aller-retour
 backtest.ts     rejoue `decide` bougie par bougie : décision à la clôture, exécution à l'ouverture suivante
+history.ts      titres d'époque : captures RSS de la Wayback Machine, jugées par Jev, dans data/history.json
 broker.ts       miroir optionnel : ordres MARKET signés HMAC sur le testnet Binance
 bot.ts          boucles (prix 1 s, bougies et news 60 s), événements, cache du backtest
 server.ts       API Hono locale, flux SSE vers l'interface, fichiers statiques

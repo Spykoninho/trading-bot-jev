@@ -2,7 +2,7 @@ import { XMLParser } from "fast-xml-parser";
 
 export type Headline = { title: string; source: string; publishedAt: string };
 
-const FEEDS = {
+export const FEEDS = {
   CoinDesk: "https://www.coindesk.com/arc/outboundfeeds/rss/",
   Cointelegraph: "https://cointelegraph.com/rss",
 };

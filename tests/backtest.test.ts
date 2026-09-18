@@ -34,6 +34,20 @@ describe("backtest", () => {
     expect(entry!.fee).toBeCloseTo(1);
   });
 
+  it("replays period headlines without look-ahead: a fresh regulatory scare delays the entry by one candle", () => {
+    const series = { BTCUSDT: candles(roundTrip) };
+    const entry = Date.parse(backtest(series, cfg).trades[0]!.time);
+    const scare = (publishedAt: number) => [
+      { headline: { title: "ban", source: "s", publishedAt: new Date(publishedAt).toISOString() }, asset: "BTC" as const, assetConfidence: 1, sentiment: -1, sentimentConfidence: 1, material: 1, regulatoryRisk: 0.95 },
+    ];
+
+    const before = backtest(series, cfg, scare(entry - 3_600_000));
+    expect(Date.parse(before.trades[0]!.time)).toBe(entry + 14_400_000);
+
+    const after = backtest(series, cfg, scare(entry + 1000));
+    expect(Date.parse(after.trades[0]!.time)).toBe(entry);
+  });
+
   it("splits the capital equally across symbols and aligns series of different lengths", () => {
     const r = backtest({ BTCUSDT: candles(roundTrip), ETHUSDT: candles([100, 100, ...roundTrip]) }, cfg);
     const buys = r.trades.filter((t) => t.side === "BUY");

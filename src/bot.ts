@@ -3,6 +3,7 @@ import { backtest, type BacktestResult } from "./backtest.js";
 import { judgeHeadlines, type Judgment } from "./brain.js";
 import { placeMarketOrder } from "./broker.js";
 import { config } from "./config.js";
+import { loadArchive } from "./history.js";
 import { fetchCandles, fetchHistory, startPriceFeed } from "./market.js";
 import { fetchHeadlines } from "./news.js";
 import { buy, close, equity, newPortfolio, recordEquity, stats, type Trade } from "./portfolio.js";
@@ -130,14 +131,35 @@ export async function reset(symbols: string[]): Promise<void> {
 }
 
 // Backtest sur l'historique réel, mis en cache une heure ; même fonction `decide` que le live
-const cache = new Map<string, { at: number; result: BacktestResult & { symbols: string[] } }>();
+const variant = (r: BacktestResult) => ({ curve: r.strategy, trades: r.trades, stats: r.stats });
+type Comparison = Awaited<ReturnType<typeof compare>>;
+const cache = new Map<string, { at: number; result: Comparison }>();
 
-export async function runBacktest() {
+// Deux passes sur les mêmes bougies : sans news, puis avec les titres d'époque jugés par Jev (npm run history)
+async function compare(symbols: string[]) {
+  const entries = await Promise.all(symbols.map(async (s) => [s, await fetchHistory(s, config.strategy.interval, config.backtestYears)] as const));
+  const history = Object.fromEntries(entries);
+  const { judgments } = await loadArchive();
+  const plain = backtest(history);
+  const jev = judgments.length ? backtest(history, config, judgments) : null;
+  const first = new Date(plain.times[0]!).toISOString();
+  const covered = new Set(judgments.filter((j) => j.headline.publishedAt >= first).map((j) => j.headline.publishedAt.slice(0, 10)));
+  return {
+    symbols,
+    times: plain.times,
+    hold: plain.hold,
+    holdStats: { return: plain.stats.holdReturn, drawdown: plain.stats.holdDrawdown },
+    plain: variant(plain),
+    jev: jev && variant(jev),
+    news: { headlines: judgments.length, daysCovered: covered.size, days: Math.round((plain.times.at(-1)! - plain.times[0]!) / 86_400_000) },
+  };
+}
+
+export async function runBacktest(): Promise<Comparison> {
   const symbols = [...state.active];
   const hit = cache.get(symbols.join());
   if (hit && Date.now() - hit.at < 3_600_000) return hit.result;
-  const entries = await Promise.all(symbols.map(async (s) => [s, await fetchHistory(s, config.strategy.interval, config.backtestYears)] as const));
-  const result = { symbols, ...backtest(Object.fromEntries(entries)) };
+  const result = await compare(symbols);
   cache.set(symbols.join(), { at: Date.now(), result });
   return result;
 }
