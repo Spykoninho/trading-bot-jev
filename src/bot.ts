@@ -5,7 +5,7 @@ import { placeMarketOrder } from "./broker.js";
 import { config } from "./config.js";
 import { loadArchive } from "./history.js";
 import { fetchCandles, fetchHistory, startPriceFeed } from "./market.js";
-import { dueReadings, scoreboard, track, type TrackedEvent } from "./events.js";
+import { dueReadings, matchRule, scoreboard, track, type TrackedEvent } from "./events.js";
 import { SOURCES, headlineKey, type Source } from "./news.js";
 import { buy, close, equity, newPortfolio, recordEquity, stats, type Trade } from "./portfolio.js";
 import { decide, type Decision } from "./strategy.js";
@@ -54,14 +54,33 @@ function mirror(trade: Trade): void {
 
 function act(d: Decision): void {
   if (d.action === "HOLD") return;
-  // Exécution au prix temps réel ; le capital est réparti à parts égales entre les actifs choisis
+  // Exécution au prix temps réel ; hors réserve événementielle, le capital est réparti à parts égales entre les actifs choisis
   const order = { symbol: d.symbol, price: state.prices[d.symbol] ?? d.price, fee: config.fee, reason: d.reason };
-  const usdt = equity(state.portfolio, state.prices) / state.active.length;
-  const trade = d.action === "BUY" ? buy(state.portfolio, { ...order, usdt }) : close(state.portfolio, order);
+  const usdt = (equity(state.portfolio, state.prices) * (1 - config.eventReserve)) / state.active.length;
+  announce(d.action === "BUY" ? buy(state.portfolio, { ...order, usdt }) : close(state.portfolio, order));
+}
+
+function announce(trade: Trade | null): void {
   if (!trade) return;
   console.log(`${trade.side} ${trade.symbol} ${trade.usdt.toFixed(2)} USDT @ ${trade.price} — ${trade.reason}`);
   mirror(trade);
   emit("trade", trade);
+}
+
+// Circuit immédiat : n'attend pas la clôture d'une bougie 4 h, agit dès qu'un événement capté en direct déclenche une règle
+function react(event: TrackedEvent): void {
+  const rule = matchRule(event, config.eventRules);
+  if (!rule || !state.active.includes(event.symbol)) return;
+  const order = { symbol: event.symbol, book: "event" as const, price: state.prices[event.symbol]!, fee: config.fee, reason: `événement : ${rule.name}` };
+  const exitAt = new Date(Date.now() + rule.holdMin * 60_000).toISOString();
+  announce(buy(state.portfolio, { ...order, usdt: equity(state.portfolio, state.prices) * rule.share, exitAt }));
+}
+
+function closeExpired(): void {
+  for (const pos of Object.values(state.portfolio.positions)) {
+    if (!pos.exitAt || Date.parse(pos.exitAt) > Date.now()) continue;
+    announce(close(state.portfolio, { symbol: pos.symbol, book: "event", price: state.prices[pos.symbol] ?? pos.entryPrice, fee: config.fee, reason: "événement : sortie programmée" }));
+  }
 }
 
 // Décision 100 % code sur les bougies clôturées ; Jev n'intervient que via le biais et le veto news
@@ -104,6 +123,7 @@ async function pollSource(source: Source): Promise<void> {
 
   const tracked = judged.map((j) => track(j, source.kind, state.prices, config.news.minConfidence)).filter((e) => e !== null);
   state.events = [...state.events, ...tracked].slice(-MAX_EVENTS);
+  tracked.forEach(react);
   console.log(`${source.name} : ${judged.length} nouveau(x) titre(s) jugé(s), ${tracked.length} suivi(s)`);
   emit("news", state.judgments);
   if (tracked.length) emit("events", eventsView());
@@ -128,6 +148,8 @@ export async function start(): Promise<void> {
     const positions = Object.values(saved.portfolio?.positions ?? {}) as { cost?: number }[];
     const active = (saved.active ?? []).filter((s: string) => config.symbols.includes(s));
     if (active.length && positions.every((p) => p.cost !== undefined)) Object.assign(state, { ...saved, active, seen: saved.seen ?? [] });
+    // Positions sauvegardées avant l'ajout du champ `symbol` : la clé était le symbole
+    for (const [key, pos] of Object.entries(state.portfolio.positions)) pos.symbol ??= key;
   } catch {}
   try {
     state.events = JSON.parse(await readFile(EVENTS_FILE, "utf8"));
@@ -142,6 +164,7 @@ export async function start(): Promise<void> {
   setInterval(() => safely(persist), 15_000);
   setInterval(() => safely(refreshCandles), config.candlesEverySec * 1000);
   setInterval(() => safely(fillReadings), 60_000);
+  setInterval(closeExpired, 10_000);
 
   await safely(refreshCandles);
   // Chaque source a sa cadence : la presse toutes les 60 s, les sources primaires toutes les 30 s
@@ -214,9 +237,9 @@ function live() {
     equity: total,
     pnl: total - p.startCash,
     cash: p.cash,
-    positions: Object.entries(p.positions).map(([symbol, pos]) => {
-      const price = state.prices[symbol] ?? pos.entryPrice;
-      return { symbol, ...pos, price, value: pos.qty * price, gain: price / pos.entryPrice - 1 };
+    positions: Object.entries(p.positions).map(([key, pos]) => {
+      const price = state.prices[pos.symbol] ?? pos.entryPrice;
+      return { ...pos, event: key !== pos.symbol, price, value: pos.qty * price, gain: price / pos.entryPrice - 1 };
     }),
     stats: stats(p),
   };
@@ -226,7 +249,7 @@ function live() {
 export function view() {
   const p = state.portfolio;
   return {
-    config: { symbols: config.symbols, fee: config.fee, live: config.live, strategy: config.strategy, news: config.news, backtestYears: config.backtestYears },
+    config: { symbols: config.symbols, fee: config.fee, live: config.live, strategy: config.strategy, news: config.news, eventRules: config.eventRules, backtestYears: config.backtestYears },
     active: state.active,
     startedAt: p.startedAt,
     startCash: p.startCash,

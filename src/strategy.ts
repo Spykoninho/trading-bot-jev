@@ -2,8 +2,8 @@ import type { Judgment } from "./brain.js";
 import { config, type Config } from "./config.js";
 import type { Position } from "./portfolio.js";
 
-export type Action = "BUY" | "SELL" | "HOLD";
-export type Trend = "up" | "down" | "none";
+type Action = "BUY" | "SELL" | "HOLD";
+type Trend = "up" | "down" | "none";
 
 export type Decision = {
   symbol: string;
@@ -18,7 +18,7 @@ export type Decision = {
   reason: string;
 };
 
-export type DecisionInput = {
+type DecisionInput = {
   symbol: string;
   closes: number[];
   judgments: Judgment[];
@@ -47,8 +47,7 @@ export function newsBias(judgments: Judgment[], base: string, now: number, cfg: 
   return { score: weights > 0 ? sum / weights : null, count: relevant.length, regulatoryRisk };
 }
 
-// Tendance avec hystérésis : haussière au-dessus de EMA×(1+bande), baissière sous EMA×(1−bande), inchangée entre les deux.
-// `tilt` décale les seuils de la dernière bougie seulement : des news positives font entrer plus tôt et sortir plus tard.
+// Hystérésis : haussier au-dessus de EMA×(1+bande), baissier sous EMA×(1−bande) ; `tilt` (news) décale les seuils de la dernière bougie
 export function trendRegime(closes: number[], s: { emaPeriod: number; band: number }, tilt = 0) {
   const k = 2 / (s.emaPeriod + 1);
   let ema = closes[0] ?? 0;

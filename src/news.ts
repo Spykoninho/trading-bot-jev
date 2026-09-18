@@ -3,8 +3,7 @@ import { XMLParser } from "fast-xml-parser";
 // `body` = texte complet quand la source le fournit : Jev juge le contenu, pas seulement le titre
 export type Headline = { title: string; source: string; publishedAt: string; body?: string; link?: string };
 
-// presse = article écrit après l'événement ; primaire = l'émetteur de l'événement lui-même.
-// `fetchBody` va chercher le texte complet d'un titre nouveau quand le flux ne le contient pas.
+// presse = article écrit après l'événement ; primaire = l'émetteur lui-même ; `fetchBody` = texte complet absent du flux
 export type Source = { name: string; kind: "presse" | "primaire"; everySec: number; fetch: () => Promise<Headline[]>; fetchBody?: (h: Headline) => Promise<string> };
 
 // Flux de presse, aussi utilisés par history.ts pour retrouver les titres d'époque
@@ -46,11 +45,6 @@ export function parseRss(xml: string, source: string, withBody = false): Headlin
 // Identité d'une publication : le titre seul ne suffit pas, la Fed réutilise « Federal Reserve issues FOMC statement »
 export const headlineKey = (h: Headline) => `${h.title}|${h.publishedAt}`;
 
-export function dedupe(headlines: Headline[]): Headline[] {
-  const seen = new Set<string>();
-  return headlines.filter((h) => !seen.has(h.title.toLowerCase()) && seen.add(h.title.toLowerCase()));
-}
-
 async function get(url: string): Promise<Response> {
   const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`${url}: ${res.status}`);
@@ -71,26 +65,18 @@ export async function fedBody(link: string): Promise<string> {
 }
 
 // Annonces officielles Binance : catalogue 48 = nouveaux listings, 161 = retraits de cotation
-const binance = (name: string, catalogs: number[], everySec: number): Source => ({
-  name,
-  kind: "primaire",
-  everySec,
-  fetch: async () => {
-    const pages = await Promise.all(
-      catalogs.map(async (id) => {
-        const res = await get(`https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=${id}&pageNo=1&pageSize=20`);
-        const body = (await res.json()) as { data?: { catalogs?: { articles?: { title: string; releaseDate: number }[] }[] } };
-        return body.data?.catalogs?.[0]?.articles ?? [];
-      }),
-    );
-    return pages.flat().map((a) => ({ title: a.title, source: name, publishedAt: new Date(a.releaseDate).toISOString() }));
-  },
-});
+export const BINANCE = { name: "Binance (annonces)", catalogs: [48, 161] };
+
+export async function binanceAnnouncements(catalog: number, page = 1): Promise<Headline[]> {
+  const res = await get(`https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=${catalog}&pageNo=${page}&pageSize=50`);
+  const body = (await res.json()) as { data?: { catalogs?: { articles?: { title: string; releaseDate: number }[] }[] } };
+  return (body.data?.catalogs?.[0]?.articles ?? []).map((a) => ({ title: a.title, source: BINANCE.name, publishedAt: new Date(a.releaseDate).toISOString() }));
+}
 
 export const SOURCES: Source[] = [
   rss("CoinDesk", "presse", FEEDS.CoinDesk, 60),
   rss("Cointelegraph", "presse", FEEDS.Cointelegraph, 60),
-  binance("Binance (annonces)", [48, 161], 30),
+  { name: BINANCE.name, kind: "primaire", everySec: 30, fetch: async () => (await Promise.all(BINANCE.catalogs.map((id) => binanceAnnouncements(id)))).flat() },
   rss("SEC (communiqués)", "primaire", "https://www.sec.gov/news/pressreleases.rss", 60, true),
   { ...rss("Fed (communiqués)", "primaire", "https://www.federalreserve.gov/feeds/press_all.xml", 30), fetchBody: (h) => fedBody(h.link ?? "") },
   rss("Trump (Truth Social)", "primaire", "https://trumpstruth.org/feed", 30, true),

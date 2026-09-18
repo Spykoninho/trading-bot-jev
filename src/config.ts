@@ -22,6 +22,9 @@ export const config = {
     newsTilt: 0.005, // le biais news de Jev décale les seuils d'au plus ±0,5 %
     window: 1000, // bougies clôturées utilisées pour chaque décision, en live comme en backtest
   },
+  // Circuit immédiat : seules les règles soutenues par l'étude d'événements (npm run study), sur une part réservée du capital
+  eventRules: [{ name: "Trump soutient la crypto", source: "Trump (Truth Social)", detail: "Soutien crypto", min: 0.8, share: 0.1, holdMin: 240 }],
+  eventReserve: 0.1,
   news: {
     minConfidence: 0.5,
     halfLifeHours: 3,

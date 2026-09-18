@@ -1,7 +1,7 @@
 import { TypeSafeClient, choice, noul, score, type Questions, type SystemOneResult } from "@typesafe-ai/sdk";
 import type { Headline } from "./news.js";
 
-export type Asset = "BTC" | "ETH" | "SOL" | "crypto" | "unrelated";
+type Asset = "BTC" | "ETH" | "SOL" | "crypto" | "unrelated";
 
 export type Judgment = {
   headline: Headline;
@@ -18,8 +18,7 @@ export type Judgment = {
 
 // Une question = un jugement étroit ; toutes sont évaluées en parallèle sur le même state
 export const questions = {
-  // Choice : une option parmi un ensemble fermé, avec une probabilité par option
-  // `crypto` couvre aussi la macro et la politique : les sources primaires (Fed, SEC, Trump) ne parlent pas toujours de crypto
+  // Choice : une option parmi un ensemble fermé, une probabilité par option ; `crypto` couvre aussi la macro et la politique
   asset: choice("Which asset is this news item mainly about?", {
     BTC: "Bitcoin specifically",
     ETH: "Ethereum specifically",
@@ -51,9 +50,8 @@ const SURE = 0.6;
 const clamp = (n: number) => Math.max(-1, Math.min(1, n));
 const p = (n = 0) => n.toFixed(2);
 
-// Fan-out spéculatif : chaque source primaire ajoute ses propres questions, posées dans la même requête.
-// Le modèle répond à tout ; c'est le code qui décide comment ces réponses corrigent sentiment et impact.
-export const SOURCE_RULES: Record<string, SourceRule> = {
+// Fan-out spéculatif : questions propres à la source posées dans la même requête ; `compose` (du code) en tire sentiment et impact
+const SOURCE_RULES: Record<string, SourceRule> = {
   "Fed (communiqués)": {
     questions: {
       rate_decision: choice("What does this Federal Reserve release decide about the target range for the federal funds rate?", {
@@ -67,7 +65,7 @@ export const SOURCE_RULES: Record<string, SourceRule> = {
       const { choice: decision = "none", confidence = 0 } = a.rate_decision ?? {};
       const details = { "Décision de taux": `${decision} (${p(confidence)})` };
       if (decision === "none" || confidence < SURE) return { details };
-      // Une baisse de taux soutient les actifs risqués, une hausse les pénalise ; un statu quo garde le ton jugé par `sentiment`
+      // Sens a priori (baisse = haussier) ; l'étude d'événements montre qu'une baisse attendue est déjà dans les prix
       const sentiment = decision === "cut" ? 0.75 : decision === "hike" ? -0.75 : base.sentiment;
       return { details, asset: "crypto", assetConfidence: confidence, sentiment, material: Math.max(base.material, decision === "hold" ? 0.5 : 0.9) };
     },

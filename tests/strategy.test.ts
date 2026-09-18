@@ -25,7 +25,7 @@ const judgment = (over: Partial<Judgment> & { age?: number } = {}): Judgment => 
 const flat = Array(30).fill(100);
 const rising = [...flat, 101, 102, 103, 104, 105];
 const falling = [...flat, 99, 98, 97, 96, 95];
-const position: Position = { qty: 1, entryPrice: 100, cost: 100, entryTime: hoursAgo(10) };
+const position: Position = { symbol: "BTCUSDT", qty: 1, entryPrice: 100, cost: 100, entryTime: hoursAgo(10) };
 const input = (over: Partial<Parameters<typeof decide>[0]>) => ({ symbol: "BTCUSDT", closes: flat, judgments: [], now: NOW, ...over });
 
 describe("newsBias", () => {

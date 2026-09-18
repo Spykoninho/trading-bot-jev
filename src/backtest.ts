@@ -26,8 +26,7 @@ function maxDrawdown(curve: number[]): number {
 
 const NEWS_WINDOW_MS = 24 * 3_600_000;
 
-// Rejoue la décision du live bougie par bougie : décision à la clôture, exécution à l'ouverture suivante, frais inclus.
-// `judgments` (triés par date) = titres d'époque jugés par Jev ; sans eux, seul le volet prix de la stratégie est évalué.
+// Rejoue `decide` bougie par bougie : décision à la clôture, exécution à l'ouverture suivante ; `judgments` triés par date
 export function backtest(history: Record<string, Candle[]>, cfg: BacktestConfig = config, judgments: Judgment[] = []): BacktestResult {
   const symbols = Object.keys(history);
   const length = Math.min(...symbols.map((s) => history[s]!.length));

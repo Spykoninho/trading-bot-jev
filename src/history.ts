@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { judgeHeadlines, judgeVersion, type Judgment } from "./brain.js";
 import { config } from "./config.js";
-import { FEEDS, HEADERS, fedBody, headlineKey, parseRss, plain, type Headline } from "./news.js";
+import { BINANCE, FEEDS, HEADERS, binanceAnnouncements, fedBody, headlineKey, parseRss, plain, type Headline } from "./news.js";
 
 // Archive des titres d'époque, avec les mêmes noms de sources que le direct
 const FILE = "data/history.json";
@@ -15,7 +15,6 @@ const WAYBACK_FEEDS: Record<string, { url: string; withBody: boolean }> = {
 };
 const FED_INDEX = "https://www.federalreserve.gov/json/ne-press.json";
 const TRUMP_ARCHIVE = "https://ix.cnn.io/data/truth-social/truth_archive.json";
-const BINANCE_CATALOGS = [48, 161];
 
 type Archive = { captures: string[]; headlines: Headline[]; judgments: Judgment[] };
 
@@ -141,21 +140,18 @@ async function collectPrimary(archive: Archive, from: Date): Promise<void> {
     if (body.length > 20) upsert(archive, index, { title: body.slice(0, 400), source: "Trump (Truth Social)", publishedAt: new Date(post.created_at).toISOString(), body }, from);
   }
 
-  for (const catalog of BINANCE_CATALOGS) {
+  for (const catalog of BINANCE.catalogs) {
     for (let page = 1; ; page++) {
-      const body = await getJson<{ data?: { catalogs?: { articles?: { title: string; releaseDate: number }[] }[] } }>(
-        `https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=${catalog}&pageNo=${page}&pageSize=50`,
-      );
-      const articles = body.data?.catalogs?.[0]?.articles ?? [];
-      for (const a of articles) upsert(archive, index, { title: a.title, source: "Binance (annonces)", publishedAt: new Date(a.releaseDate).toISOString() }, from);
-      if (!articles.length || articles.at(-1)!.releaseDate < from.getTime()) break;
+      const articles = await retry(() => binanceAnnouncements(catalog, page));
+      for (const a of articles) upsert(archive, index, a, from);
+      if (!articles.length || Date.parse(articles.at(-1)!.publishedAt) < from.getTime()) break;
     }
   }
   console.log(`Sources primaires : ${archive.headlines.length} titres au total`);
   await save(archive);
 }
 
-// Mêmes questions et même state que le direct. Un jugement est refait quand les questions de sa source ont changé de version.
+// Mêmes questions et même state que le direct ; un jugement est refait quand les questions de sa source changent de version
 async function judgeArchive(archive: Archive): Promise<void> {
   const current = new Map(archive.judgments.map((j) => [headlineKey(j.headline), j]));
   const version = (h: Headline) => current.get(headlineKey(h))?.version ?? (current.has(headlineKey(h)) ? 1 : 0);
@@ -182,6 +178,6 @@ if (process.argv[1]?.endsWith("history.ts")) {
   const from = new Date(Date.now() - config.backtestYears * 365 * 86_400_000);
   await collectPrimary(archive, from);
   await collectHeadlines(archive, from);
-  if (!process.argv.includes("--no-judge")) await judgeArchive(archive);
+  await judgeArchive(archive);
   console.log(`Terminé : ${archive.headlines.length} titres, ${archive.judgments.length} jugements dans ${FILE}`);
 }

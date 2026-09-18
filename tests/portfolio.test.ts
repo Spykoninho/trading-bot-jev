@@ -38,6 +38,21 @@ describe("close", () => {
   });
 });
 
+describe("event book", () => {
+  it("keeps an event position next to the trend position on the same symbol, each closed on its own", () => {
+    const p = newPortfolio(1000);
+    buy(p, { ...order, usdt: 400 });
+    const event = buy(p, { ...order, usdt: 100, book: "event", exitAt: "2026-01-01T16:00:00.000Z" });
+    expect(event?.usdt).toBe(100);
+    expect(Object.keys(p.positions)).toEqual(["BTCUSDT", "event:BTCUSDT"]);
+    expect(p.positions["event:BTCUSDT"]).toMatchObject({ symbol: "BTCUSDT", exitAt: "2026-01-01T16:00:00.000Z" });
+    expect(equity(p, { BTCUSDT: 50_000 })).toBeCloseTo(1000 - 0.5);
+
+    close(p, { ...order, book: "event" });
+    expect(Object.keys(p.positions)).toEqual(["BTCUSDT"]);
+  });
+});
+
 describe("equity and stats", () => {
   it("values positions at current prices and records history", () => {
     const p = newPortfolio(1000);

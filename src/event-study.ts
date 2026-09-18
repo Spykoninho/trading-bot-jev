@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import type { Judgment } from "./brain.js";
 import { config } from "./config.js";
+import { SYMBOL, isStrong } from "./events.js";
 import { loadArchive } from "./history.js";
 import { SOURCES } from "./news.js";
 
@@ -8,7 +9,6 @@ import { SOURCES } from "./news.js";
 const CACHE = "data/event-klines.json";
 const LATENCY_MIN = 2; // entrée réaliste : sondage RSS 60 s + jugement + ordre
 const HORIZONS = { "−60→0 (avant)": -60, "+5 min": 5, "+15 min": 15, "+1 h": 60, "+4 h": 237 };
-const SYMBOL: Record<string, string> = { BTC: "BTCUSDT", ETH: "ETHUSDT", SOL: "SOLUSDT", crypto: "BTCUSDT" };
 
 type Prices = [number, number][];
 
@@ -33,7 +33,7 @@ function summarize(values: number[]) {
 
 const { judgments } = await loadArchive();
 const relevant = judgments.filter((j) => j.asset !== "unrelated" && j.assetConfidence >= config.news.minConfidence);
-const strong = relevant.filter((j) => j.material >= 0.7 && Math.abs(j.sentiment) >= 0.5);
+const strong = relevant.filter(isStrong);
 // Presse = article écrit après l'événement ; primaire = l'émetteur lui-même, horodaté à l'instant de l'événement
 const kind = Object.fromEntries(SOURCES.map((s) => [s.name, s.kind]));
 const strongOf = (k: string) => strong.filter((j) => kind[j.headline.source] === k);

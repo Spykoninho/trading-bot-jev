@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Judgment } from "../src/brain.js";
-import { dueReadings, scoreboard, track, type TrackedEvent } from "../src/events.js";
+import { dueReadings, matchRule, scoreboard, track, type TrackedEvent } from "../src/events.js";
 
 const NOW = Date.parse("2026-01-01T12:00:00Z");
 const prices = { BTCUSDT: 100, ETHUSDT: 50 };
@@ -29,6 +29,18 @@ describe("track", () => {
     expect(track(judgment({ asset: "unrelated" }), "presse", prices, 0.5, NOW)).toBeNull();
     expect(track(judgment({ assetConfidence: 0.3 }), "presse", prices, 0.5, NOW)).toBeNull();
     expect(track(judgment({ asset: "SOL" }), "presse", prices, 0.5, NOW)).toBeNull();
+  });
+});
+
+describe("matchRule", () => {
+  const rules = [{ name: "Trump soutient la crypto", source: "Trump (Truth Social)", detail: "Soutien crypto", min: 0.8, share: 0.1, holdMin: 240 }];
+  const post = (source: string, support: string) => event({ judgment: judgment({ headline: { title: "t", source, publishedAt: new Date(NOW).toISOString() }, details: { "Soutien crypto": support } }) });
+
+  it("fires only for the rule's source and when Jev's answer is confident enough", () => {
+    expect(matchRule(post("Trump (Truth Social)", "0.93"), rules)?.name).toBe("Trump soutient la crypto");
+    expect(matchRule(post("Trump (Truth Social)", "0.55"), rules)).toBeUndefined();
+    expect(matchRule(post("CoinDesk", "0.93"), rules)).toBeUndefined();
+    expect(matchRule(event(), rules)).toBeUndefined();
   });
 });
 

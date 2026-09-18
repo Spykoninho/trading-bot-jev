@@ -175,7 +175,7 @@ function renderLive(live) {
   $("pnl").textContent = `${live.pnl >= 0 ? "▲" : "▼"} ${signed(live.pnl)} USDT (${signed((live.pnl / state.startCash) * 100)} %) depuis le ${when(state.startedAt)}`;
 
   const rows = [["Cash", `${nf(live.cash)} USDT`, ""]];
-  for (const p of live.positions) rows.push([base(p.symbol), `${nf(p.value)} USDT`, `entrée ${nf(p.entryPrice)}, ${signed(p.gain * 100)} %`]);
+  for (const p of live.positions) rows.push([`${base(p.symbol)}${p.event ? " (événement)" : ""}`, `${nf(p.value)} USDT`, `entrée ${nf(p.entryPrice)}, ${signed(p.gain * 100)} %${p.exitAt ? `, sortie à ${clock(p.exitAt)}` : ""}`]);
   if (!live.positions.length) rows.push(["Positions", "Aucune", ""]);
   $("holdings").replaceChildren(...rows.flatMap(([k, v, sub]) => [el("dt", {}, k), el("dd", {}, v, ...(sub ? [el("small", {}, sub)] : []))]));
 
@@ -247,7 +247,8 @@ const HORIZON_LABELS = { 5: "+5 min", 15: "+15 min", 60: "+1 h", 240: "+4 h" };
 
 function renderEvents() {
   const { list, scoreboard, sources } = state.events;
-  $("sources").textContent = `Sources sondées : ${sources.map((s) => `${s.name} (${s.kind}, toutes les ${s.everySec} s)`).join(", ")}.`;
+  const rules = state.config.eventRules.map((r) => `« ${r.name} » : achat immédiat de ${nf(r.share * 100, 0)} % du capital, revendu ${r.holdMin / 60} h plus tard`);
+  $("sources").textContent = `Sources sondées : ${sources.map((s) => `${s.name} (${s.kind}, toutes les ${s.everySec} s)`).join(", ")}. Circuit immédiat, sans attendre la clôture d'une bougie : ${rules.join(" ; ")}.`;
 
   if (!list.length) {
     $("eventStats").textContent = "";
