@@ -60,3 +60,15 @@ Backtest, stop-loss, WebSocket temps réel, plusieurs stratégies, UI.
   `GET /api/candles/:symbol`, `POST /api/cycle`, `POST /api/reset`.
 - **`public/`** : vanilla JS + Chart.js servi depuis `node_modules`, palette dataviz de
   référence, clair/sombre, titres RSS insérés en nœuds texte uniquement.
+
+## v3 — micro-trading temps réel
+
+- **Prix** : WebSocket Binance `miniTicker`, échantillonné chaque seconde dans un tampon de 10 min.
+- **Signal micro** (code) : écart EMA 10 s / EMA 60 s saturé à ±0,02 % ; sorties sur objectif,
+  stop-loss, durée max ou retournement. Calibré sur 3 h de klines 1 s réelles : avantage brut
+  ≈ +0,5 %, mais négatif avec 0,1 % de frais par ordre.
+- **Jev** : ne juge que les titres nouveaux (poll RSS 60 s) ; biais news avec demi-vie de 3 h.
+- **Temps réel** : `bot.ts` émet `tick` (1 s), `trade`, `news`, `reset` ; `server.ts` les pousse
+  en SSE. Vitesse de décision réglable (`POST /api/speed/:ms`).
+- **UI** : thème sombre, chandeliers `lightweight-charts`, intervalles 1m→1D, bougie en cours
+  animée par le flux, courbe d'équité en série baseline.

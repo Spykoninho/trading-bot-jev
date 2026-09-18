@@ -13,11 +13,11 @@
     <header class="bar">
       <div>
         <h1>trading-bot-jev</h1>
-        <p id="mode" class="muted"></p>
+        <p id="feed" class="feed"></p>
       </div>
-      <div class="actions">
-        <button id="run" class="primary">Lancer un cycle</button>
-        <button id="reset">Recommencer à zéro</button>
+      <div class="controls">
+        <div id="speed" class="segmented" role="group" aria-label="Vitesse de décision du bot"></div>
+        <button id="reset">Recommencer</button>
       </div>
     </header>
     <p id="status" role="status" class="status" hidden></p>
@@ -29,31 +29,36 @@
           <p id="equity" class="hero">–</p>
           <p id="pnl" class="delta"></p>
           <dl id="holdings"></dl>
+          <p id="stats" class="muted"></p>
         </div>
         <figure>
-          <figcaption>Valeur du portefeuille depuis le départ, en USDT</figcaption>
-          <div class="chart tall"><canvas id="equityChart"></canvas></div>
+          <figcaption>Valeur du portefeuille en USDT, vert au-dessus du capital de départ, rouge en dessous</figcaption>
+          <div id="equityChart" class="chart"></div>
         </figure>
       </section>
 
-      <section id="prices" class="prices" aria-label="Cours des cryptos suivies"></section>
-
-      <section class="panel" aria-labelledby="cycles-title">
-        <h2 id="cycles-title">Décisions du bot</h2>
-        <p class="muted">
-          À chaque cycle, Jev juge les titres de presse ; le code combine ces jugements avec le signal technique. Le
-          point montre le score final entre vendre (−1) et acheter (+1), les zones colorées sont les seuils d'action.
-        </p>
-        <div id="cycles"></div>
-      </section>
+      <div class="toolbar">
+        <div id="intervals" class="segmented" role="group" aria-label="Durée d'une bougie"></div>
+        <p class="muted">▲ achat du bot, ▼ vente du bot</p>
+      </div>
+      <section id="markets" class="markets" aria-label="Cours en direct"></section>
 
       <section class="panel" aria-labelledby="trades-title">
-        <h2 id="trades-title">Ordres exécutés</h2>
-        <div id="trades"></div>
+        <h2 id="trades-title">Ordres du bot</h2>
+        <div id="trades" class="scroll"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="news-title">
+        <h2 id="news-title">Titres jugés par Jev</h2>
+        <p class="muted">
+          Jev lit chaque nouveau titre dès sa parution. Le biais news de chaque actif est la moyenne des sentiments,
+          pondérée par l'impact marché, la confiance du modèle et la fraîcheur du titre.
+        </p>
+        <div id="news" class="scroll"></div>
       </section>
     </main>
 
-    <script src="vendor/chart.js"></script>
+    <script src="vendor/charts.js"></script>
     <script type="module" src="app.js"></script>
   </body>
 </html>

@@ -1,28 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { sma, techSignal, type Candle } from "../src/market.js";
+import { ema, microSignal } from "../src/market.js";
 
-const candles = (closes: number[]): Candle[] => closes.map((close, i) => ({ time: i, close }));
+const m = { fast: 10, slow: 60, saturation: 0.0004 };
 
-describe("sma", () => {
-  it("averages the last `period` values", () => {
-    expect(sma([1, 2, 3, 4], 2)).toBe(3.5);
+describe("ema", () => {
+  it("stays on a constant series and leans toward recent values", () => {
+    expect(ema([5, 5, 5], 2)).toBe(5);
+    expect(ema([1, 1, 1, 10], 3)).toBeGreaterThan(ema([10, 1, 1, 1], 3));
   });
 });
 
-describe("techSignal", () => {
-  it("is positive when price is above its SMA and bounded to [-1, 1]", () => {
-    const flat = Array(47).fill(100);
-    const up = techSignal(candles([...flat, 110]));
-    expect(up.signal).toBe(1);
-    expect(up.price).toBe(110);
-    expect(up.change24h).toBeCloseTo(0.1);
-
-    const down = techSignal(candles([...flat, 99]));
-    expect(down.signal).toBeLessThan(0);
-    expect(down.signal).toBeGreaterThan(-1);
+describe("microSignal", () => {
+  it("is zero until enough samples are collected, and on a flat market", () => {
+    expect(microSignal(Array(30).fill(100), m)).toBe(0);
+    expect(microSignal(Array(200).fill(100), m)).toBe(0);
   });
 
-  it("is zero on a flat market", () => {
-    expect(techSignal(candles(Array(48).fill(100))).signal).toBe(0);
+  it("is positive on a fresh rise, negative on a fresh drop, bounded to [-1, 1]", () => {
+    const flat = Array(180).fill(100);
+    const rise = [...flat, ...Array.from({ length: 15 }, (_, i) => 100 + (i + 1) * 0.02)];
+    const drop = [...flat, ...Array.from({ length: 15 }, (_, i) => 100 - (i + 1) * 0.02)];
+    expect(microSignal(rise, m)).toBe(1);
+    expect(microSignal(drop, m)).toBe(-1);
+
+    const slight = [...flat, 100.005, 100.01];
+    expect(microSignal(slight, m)).toBeGreaterThan(0);
+    expect(microSignal(slight, m)).toBeLessThan(1);
   });
 });

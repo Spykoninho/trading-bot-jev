@@ -2,121 +2,166 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { judgeHeadlines, type Judgment } from "./brain.js";
 import { placeMarketOrder } from "./broker.js";
 import { config } from "./config.js";
-import { fetchPrices, marketSnapshot, type MarketSnapshot } from "./market.js";
+import { startPriceFeed } from "./market.js";
 import { fetchHeadlines } from "./news.js";
-import { applyOrder, equity, newPortfolio, recordEquity } from "./portfolio.js";
+import { buy, close, equity, newPortfolio, recordEquity, stats, type Trade } from "./portfolio.js";
 import { decide, type Decision } from "./strategy.js";
 
-export type ExecutedDecision = Decision & { price: number; result: string };
-export type CycleRecord = { time: string; markets: MarketSnapshot[]; judgments: Judgment[]; decisions: ExecutedDecision[] };
-
 const STATE_FILE = "data/state.json";
-const MAX_CYCLES = 100;
+const BUFFER_SEC = 600;
+const MAX_JUDGMENTS = 60;
 
 export const state = {
   portfolio: newPortfolio(config.startCash),
-  cycles: [] as CycleRecord[],
+  judgments: [] as Judgment[],
   prices: {} as Record<string, number>,
-  running: false,
+  buffers: {} as Record<string, number[]>,
+  signals: {} as Record<string, Decision>,
+  lastExit: {} as Record<string, number>,
+  speedMs: config.speeds.Normal,
+  feedAt: 0,
 };
 
-export async function init(): Promise<void> {
-  try {
-    const saved = JSON.parse(await readFile(STATE_FILE, "utf8"));
-    state.portfolio = saved.portfolio;
-    state.cycles = saved.cycles;
-  } catch {}
+// Bus d'événements minimal : le serveur y abonne chaque client SSE
+type Listener = (event: string, data: unknown) => void;
+const listeners = new Set<Listener>();
+const emit: Listener = (event, data) => listeners.forEach((fn) => fn(event, data));
+
+export function subscribe(fn: Listener): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
 }
 
-// Jugements bruts conservés : la stratégie peut être rejouée avec d'autres poids sans rappeler Jev
 async function persist(): Promise<void> {
   await mkdir("data", { recursive: true });
-  await writeFile(STATE_FILE, JSON.stringify({ portfolio: state.portfolio, cycles: state.cycles }));
+  await writeFile(STATE_FILE, JSON.stringify({ portfolio: state.portfolio, judgments: state.judgments }));
 }
 
-// Tick léger : prix + courbe d'équité, sans appel à Jev
-export async function tick(): Promise<void> {
-  state.prices = await fetchPrices(config.symbols);
-  recordEquity(state.portfolio, state.prices);
+// Miroir optionnel sur le testnet Binance ; un échec n'affecte jamais le portefeuille papier
+function mirror(trade: Trade): void {
+  if (!config.live) return;
+  placeMarketOrder(trade.symbol, trade.side, trade.usdt * 0.98).catch((err: Error) => console.error(`testnet: ${err.message}`));
+}
+
+function act(d: Decision): void {
+  if (d.action === "HOLD") return;
+  const order = { symbol: d.symbol, price: d.price, fee: config.fee, reason: d.reason };
+  const trade = d.action === "BUY" ? buy(state.portfolio, { ...order, usdt: config.orderUsdt }) : close(state.portfolio, order);
+  if (!trade) return;
+  if (trade.side === "SELL") state.lastExit[d.symbol] = Date.now();
+  mirror(trade);
+  emit("trade", trade);
+  void persist();
+}
+
+// Boucle de décision : cadence réglable, 100 % code, Jev n'intervient que via le biais news
+function decideAll(): void {
+  for (const symbol of config.symbols) {
+    const d = decide({
+      symbol,
+      prices: state.buffers[symbol] ?? [],
+      judgments: state.judgments,
+      position: state.portfolio.positions[symbol],
+      lastExit: state.lastExit[symbol],
+    });
+    state.signals[symbol] = d;
+    act(d);
+  }
+}
+
+// Échantillonnage à la seconde : alimente les EMA et pousse l'état à l'interface
+function sample(): void {
+  for (const symbol of config.symbols) {
+    const price = state.prices[symbol];
+    if (!price) continue;
+    const buffer = (state.buffers[symbol] ??= []);
+    buffer.push(price);
+    if (buffer.length > BUFFER_SEC) buffer.shift();
+  }
+  emit("tick", live());
+}
+
+// Jev ne juge que les titres jamais vus : chaque nouvelle news met à jour le biais en ~100 ms
+async function refreshNews(): Promise<void> {
+  const known = new Set(state.judgments.map((j) => j.headline.title));
+  const fresh = (await fetchHeadlines()).filter((h) => !known.has(h.title));
+  if (!fresh.length) return;
+  const judged = await judgeHeadlines(fresh);
+  state.judgments = [...judged, ...state.judgments]
+    .sort((a, b) => b.headline.publishedAt.localeCompare(a.headline.publishedAt))
+    .slice(0, MAX_JUDGMENTS);
+  console.log(`Jev : ${judged.length} nouveau(x) titre(s) jugé(s)`);
+  emit("news", state.judgments);
   await persist();
 }
 
-async function execute(d: Decision, price: number): Promise<string> {
-  if (d.action === "HOLD") return "-";
-  const held = (state.portfolio.positions[d.symbol] ?? 0) * price;
-  // Gestion du risque en code : une position max par actif, et SELL clôture toute la position
-  if (d.action === "BUY" && held >= config.orderUsdt / 2) return "ignoré : déjà en position";
-  const usdt = d.action === "BUY" ? config.orderUsdt : Infinity;
-  const trade = applyOrder(state.portfolio, { symbol: d.symbol, side: d.action, usdt, price, fee: config.fee, reason: d.reason });
-  if (!trade) return d.action === "SELL" ? "ignoré : aucune position" : "ignoré : cash insuffisant";
+let decisionTimer: NodeJS.Timeout | undefined;
 
-  let result = `${trade.side === "BUY" ? "achat" : "vente"} de ${trade.qty.toFixed(6)} pour ${trade.usdt.toFixed(2)} USDT`;
-  if (config.live) {
-    const mirrored = await placeMarketOrder(d.symbol, trade.side, trade.usdt * 0.98).catch((e: Error) => e);
-    result += mirrored instanceof Error ? ` · testnet KO (${mirrored.message})` : ` · testnet #${mirrored.orderId} ${mirrored.status}`;
-  }
-  return result;
+export function setSpeed(ms: number): void {
+  state.speedMs = ms;
+  clearInterval(decisionTimer);
+  decisionTimer = ms > 0 ? setInterval(decideAll, ms) : undefined;
 }
 
-export async function cycle(): Promise<CycleRecord> {
-  if (state.running) throw new Error("cycle already running");
-  state.running = true;
+const safely = (task: () => Promise<unknown>) => task().catch((err) => console.error(err));
+
+export async function start(): Promise<void> {
   try {
-    const [markets, headlines] = await Promise.all([Promise.all(config.symbols.map(marketSnapshot)), fetchHeadlines()]);
-    const judgments = await judgeHeadlines(headlines);
+    const saved = JSON.parse(await readFile(STATE_FILE, "utf8"));
+    if (saved.portfolio?.history && Array.isArray(saved.judgments)) Object.assign(state, saved);
+  } catch {}
 
-    const decisions: ExecutedDecision[] = [];
-    for (const market of markets) {
-      const d = decide(market, judgments);
-      decisions.push({ ...d, price: market.price, result: await execute(d, market.price) });
-      state.prices[market.symbol] = market.price;
-    }
-
-    const record = { time: new Date().toISOString(), markets, judgments, decisions };
-    state.cycles.push(record);
-    if (state.cycles.length > MAX_CYCLES) state.cycles.shift();
-    recordEquity(state.portfolio, state.prices);
-    await persist();
-    return record;
-  } finally {
-    state.running = false;
-  }
+  startPriceFeed(config.symbols, (symbol, price) => {
+    state.prices[symbol] = price;
+    state.feedAt = Date.now();
+  });
+  setInterval(sample, 1000);
+  setInterval(() => recordEquity(state.portfolio, state.prices), 5000);
+  setInterval(() => safely(persist), 15_000);
+  setInterval(() => safely(refreshNews), config.newsEverySec * 1000);
+  setSpeed(state.speedMs);
+  await safely(refreshNews);
 }
 
 export async function reset(): Promise<void> {
   state.portfolio = newPortfolio(config.startCash);
-  state.cycles = [];
-  await tick();
+  state.lastExit = {};
+  recordEquity(state.portfolio, state.prices);
+  await persist();
+  emit("reset", null);
 }
 
-export function view() {
+// Instantané léger poussé chaque seconde
+function live() {
   const p = state.portfolio;
   const total = equity(p, state.prices);
   return {
-    config: {
-      symbols: config.symbols,
-      intervalMin: config.intervalMin,
-      orderUsdt: config.orderUsdt,
-      live: config.live,
-      thresholds: config.thresholds,
-    },
-    running: state.running,
+    time: Date.now(),
+    feedOk: Date.now() - state.feedAt < 5000,
+    speedMs: state.speedMs,
     prices: state.prices,
-    portfolio: {
-      startedAt: p.startedAt,
-      startCash: p.startCash,
-      cash: p.cash,
-      equity: total,
-      pnl: total - p.startCash,
-      positions: Object.entries(p.positions).map(([symbol, qty]) => ({
-        symbol,
-        qty,
-        price: state.prices[symbol] ?? 0,
-        value: qty * (state.prices[symbol] ?? 0),
-      })),
-    },
+    signals: state.signals,
+    equity: total,
+    pnl: total - p.startCash,
+    cash: p.cash,
+    positions: Object.entries(p.positions).map(([symbol, pos]) => {
+      const price = state.prices[symbol] ?? pos.entryPrice;
+      return { symbol, ...pos, price, value: pos.qty * price, gain: price / pos.entryPrice - 1 };
+    }),
+    stats: stats(p),
+  };
+}
+
+// État complet, chargé une fois à l'ouverture de la page puis après un reset
+export function view() {
+  const p = state.portfolio;
+  return {
+    config: { symbols: config.symbols, orderUsdt: config.orderUsdt, fee: config.fee, live: config.live, speeds: config.speeds, micro: config.micro, news: config.news },
+    startedAt: p.startedAt,
+    startCash: p.startCash,
     history: p.history,
     trades: p.trades,
-    cycles: state.cycles.slice(-30).reverse(),
+    judgments: state.judgments,
+    live: live(),
   };
 }

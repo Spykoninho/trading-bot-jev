@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { Judgment } from "../src/brain.js";
-import type { MarketSnapshot } from "../src/market.js";
-import { decide, newsScore } from "../src/strategy.js";
+import type { Position } from "../src/portfolio.js";
+import { decide, newsBias } from "../src/strategy.js";
+
+const NOW = Date.parse("2026-01-01T12:00:00Z");
+const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
 
 const cfg = {
-  weights: { news: 0.6, tech: 0.4 },
-  thresholds: { buy: 0.25, sell: -0.25, minConfidence: 0.5, minHeadlines: 2, regulatoryRisk: 0.7 },
+  weights: { news: 0.3, tech: 0.7 },
+  micro: { fast: 10, slow: 60, saturation: 0.0004, enter: 0.4, exit: -0.2, takeProfit: 0.003, stopLoss: 0.002, maxHoldSec: 300, cooldownSec: 20 },
+  news: { minConfidence: 0.5, halfLifeHours: 3, regulatoryRisk: 0.7 },
 };
 
-const judgment = (over: Partial<Judgment>): Judgment => ({
-  headline: { title: "t", source: "s", publishedAt: "" },
+const judgment = (over: Partial<Judgment> & { age?: number } = {}): Judgment => ({
+  headline: { title: "t", source: "s", publishedAt: hoursAgo(over.age ?? 0) },
   asset: "BTC",
   assetConfidence: 0.9,
   sentiment: 0.5,
@@ -19,52 +23,67 @@ const judgment = (over: Partial<Judgment>): Judgment => ({
   ...over,
 });
 
-const market = (signal: number): MarketSnapshot => ({ symbol: "BTCUSDT", price: 1, change24h: 0, sma24: 1, signal });
+const flat = Array(180).fill(100);
+const rising = [...flat, ...Array.from({ length: 15 }, (_, i) => 100 + (i + 1) * 0.02)];
+const falling = [...flat, ...Array.from({ length: 15 }, (_, i) => 100 - (i + 1) * 0.02)];
+const position = (entryPrice: number, heldSec = 10): Position => ({ qty: 1, entryPrice, cost: entryPrice, entryTime: new Date(NOW - heldSec * 1000).toISOString() });
+const input = (over: Partial<Parameters<typeof decide>[0]>) => ({ symbol: "BTCUSDT", prices: flat, judgments: [], now: NOW, ...over });
 
-describe("newsScore", () => {
+describe("newsBias", () => {
   it("ignores unrelated assets and low-confidence asset picks", () => {
-    const res = newsScore(
-      [judgment({}), judgment({ asset: "unrelated", sentiment: -1 }), judgment({ assetConfidence: 0.3, sentiment: -1 })],
-      "BTC",
-      0.5,
-    );
+    const res = newsBias([judgment(), judgment({ asset: "unrelated", sentiment: -1 }), judgment({ assetConfidence: 0.3, sentiment: -1 })], "BTC", NOW, cfg.news);
     expect(res).toMatchObject({ score: 0.5, count: 1 });
   });
 
-  it("weights each sentiment by materiality and model confidence", () => {
-    const res = newsScore([judgment({ sentiment: 1, material: 1, sentimentConfidence: 1 }), judgment({ sentiment: -1, material: 0.5, sentimentConfidence: 0.5 })], "BTC", 0.5);
+  it("lets fresh headlines outweigh old ones", () => {
+    const res = newsBias([judgment({ sentiment: 1 }), judgment({ sentiment: -1, age: 6 })], "BTC", NOW, cfg.news);
     expect(res.score).toBeCloseTo((1 - 0.25) / 1.25);
   });
 
-  it("keeps general crypto news for every base asset", () => {
-    expect(newsScore([judgment({ asset: "crypto" })], "ETH", 0.5).count).toBe(1);
+  it("decays regulatory risk with age and keeps general crypto news for every asset", () => {
+    const res = newsBias([judgment({ asset: "crypto", regulatoryRisk: 0.9, age: 3 })], "ETH", NOW, cfg.news);
+    expect(res.count).toBe(1);
+    expect(res.regulatoryRisk).toBeCloseTo(0.45);
   });
 });
 
-describe("decide", () => {
-  it("holds when fewer than minHeadlines relevant headlines", () => {
-    const d = decide(market(1), [judgment({})], cfg);
-    expect(d.action).toBe("HOLD");
-    expect(d.reason).toContain("seulement 1");
+describe("decide — entries", () => {
+  it("waits until enough price samples are collected", () => {
+    expect(decide(input({ prices: [100, 101] }), cfg).reason).toContain("collecte");
   });
 
-  it("buys when weighted news + tech exceed the buy threshold", () => {
-    const d = decide(market(0.5), [judgment({}), judgment({})], cfg);
-    expect(d.action).toBe("BUY");
-    expect(d.score).toBeCloseTo(0.6 * 0.5 + 0.4 * 0.5);
+  it("buys on a fresh rise and holds on a flat market", () => {
+    expect(decide(input({ prices: rising }), cfg).action).toBe("BUY");
+    expect(decide(input({ prices: flat }), cfg).action).toBe("HOLD");
   });
 
-  it("blocks a buy when regulatory risk is high", () => {
-    const d = decide(market(0.5), [judgment({}), judgment({ regulatoryRisk: 0.9 })], cfg);
-    expect(d.action).toBe("HOLD");
-    expect(d.reason).toContain("réglementaire");
+  it("lets a bearish news bias veto a moderate micro signal", () => {
+    const moderate = [...flat, ...Array.from({ length: 6 }, (_, i) => 100 + (i + 1) * 0.01)];
+    const bearish = [judgment({ sentiment: -1 }), judgment({ sentiment: -1 })];
+    const alone = decide(input({ prices: moderate }), cfg);
+    const vetoed = decide(input({ prices: moderate, judgments: bearish }), cfg);
+    expect(vetoed.score).toBeCloseTo(alone.score - 0.3);
   });
 
-  it("sells when the score is below the sell threshold", () => {
-    expect(decide(market(-0.5), [judgment({ sentiment: -0.75 }), judgment({ sentiment: -0.75 })], cfg).action).toBe("SELL");
+  it("blocks entries on fresh regulatory risk and during the cooldown", () => {
+    const risky = decide(input({ prices: rising, judgments: [judgment({ regulatoryRisk: 0.9 })] }), cfg);
+    expect(risky.action).toBe("HOLD");
+    expect(risky.reason).toContain("réglementaire");
+    expect(decide(input({ prices: rising, lastExit: NOW - 5_000 }), cfg).reason).toContain("pause");
+  });
+});
+
+describe("decide — exits", () => {
+  it("takes profit, stops losses and caps the holding time", () => {
+    expect(decide(input({ position: position(99.6) }), cfg).reason).toContain("objectif");
+    expect(decide(input({ position: position(100.3) }), cfg).reason).toContain("stop-loss");
+    expect(decide(input({ position: position(100, 400) }), cfg).reason).toContain("durée max");
   });
 
-  it("holds inside the neutral band", () => {
-    expect(decide(market(0), [judgment({ sentiment: 0.1 }), judgment({ sentiment: -0.1 })], cfg).action).toBe("HOLD");
+  it("sells when the signal reverses, otherwise holds the position", () => {
+    expect(decide(input({ prices: falling, position: position(99.75) }), cfg).reason).toContain("signal retourné");
+    const held = decide(input({ position: position(100) }), cfg);
+    expect(held.action).toBe("HOLD");
+    expect(held.reason).toContain("en position");
   });
 });
