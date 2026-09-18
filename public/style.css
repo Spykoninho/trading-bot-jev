@@ -471,3 +471,8 @@ legend {
 .inactive .chart {
   opacity: 0.45;
 }
+
+td small {
+  display: block;
+  color: var(--muted);
+}

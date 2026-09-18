@@ -1,9 +1,11 @@
 import { XMLParser } from "fast-xml-parser";
 
-export type Headline = { title: string; source: string; publishedAt: string };
+// `body` = texte complet quand la source le fournit : Jev juge le contenu, pas seulement le titre
+export type Headline = { title: string; source: string; publishedAt: string; body?: string; link?: string };
 
-// presse = article écrit après l'événement ; primaire = l'émetteur de l'événement lui-même
-export type Source = { name: string; kind: "presse" | "primaire"; everySec: number; fetch: () => Promise<Headline[]> };
+// presse = article écrit après l'événement ; primaire = l'émetteur de l'événement lui-même.
+// `fetchBody` va chercher le texte complet d'un titre nouveau quand le flux ne le contient pas.
+export type Source = { name: string; kind: "presse" | "primaire"; everySec: number; fetch: () => Promise<Headline[]>; fetchBody?: (h: Headline) => Promise<string> };
 
 // Flux de presse, aussi utilisés par history.ts pour retrouver les titres d'époque
 export const FEEDS = {
@@ -19,16 +21,26 @@ const parser = new XMLParser({ ignoreAttributes: true, cdataPropName: "__cdata" 
 const text = (v: unknown): string =>
   typeof v === "object" && v !== null && "__cdata" in v ? String((v as { __cdata: unknown }).__cdata) : String(v ?? "");
 
-const plain = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 400);
+const MAX_BODY = 3000;
 
-// `body` : juger le texte du message plutôt que son titre, que certains flux tronquent (posts Truth Social)
-export function parseRss(xml: string, source: string, body = false): Headline[] {
+export const plain = (html: string) =>
+  html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_BODY);
+
+// `withBody` : le flux porte le texte dans <description> (post Truth Social entier, résumé d'un communiqué SEC)
+export function parseRss(xml: string, source: string, withBody = false): Headline[] {
   const items = parser.parse(xml)?.rss?.channel?.item ?? [];
   return (Array.isArray(items) ? items : [items])
-    .map((item) => ({ title: body ? plain(text(item.description)) || text(item.title).trim() : text(item.title).trim(), source, publishedAt: new Date(text(item.pubDate)) }))
+    .map((item) => ({ title: text(item.title).trim(), source, publishedAt: new Date(text(item.pubDate)), link: text(item.link).trim(), body: withBody ? plain(text(item.description)) : "" }))
     // Posts sans texte (image ou vidéo seule) et dates illisibles : rien à juger
     .filter((h) => h.title && !h.title.startsWith("[No Title]") && !Number.isNaN(h.publishedAt.getTime()))
-    .map((h) => ({ ...h, publishedAt: h.publishedAt.toISOString() }));
+    .map(({ body, link, ...h }) => ({ ...h, publishedAt: h.publishedAt.toISOString(), ...(link ? { link } : {}), ...(body ? { body } : {}) }));
 }
 
 export function dedupe(headlines: Headline[]): Headline[] {
@@ -42,12 +54,18 @@ async function get(url: string): Promise<Response> {
   return res;
 }
 
-const rss = (name: string, kind: Source["kind"], url: string, everySec: number, body = false): Source => ({
+const rss = (name: string, kind: Source["kind"], url: string, everySec: number, withBody = false): Source => ({
   name,
   kind,
   everySec,
-  fetch: async () => parseRss(await (await get(url)).text(), name, body),
+  fetch: async () => parseRss(await (await get(url)).text(), name, withBody),
 });
+
+// Le titre d'un communiqué de la Fed ne dit pas la décision : le texte est dans le bloc #article de la page
+export async function fedBody(link: string): Promise<string> {
+  const html = await (await get(new URL(link, "https://www.federalreserve.gov").href)).text();
+  return plain(html.slice(Math.max(0, html.indexOf('id="article"'))));
+}
 
 // Annonces officielles Binance : catalogue 48 = nouveaux listings, 161 = retraits de cotation
 const binance = (name: string, catalogs: number[], everySec: number): Source => ({
@@ -70,7 +88,7 @@ export const SOURCES: Source[] = [
   rss("CoinDesk", "presse", FEEDS.CoinDesk, 60),
   rss("Cointelegraph", "presse", FEEDS.Cointelegraph, 60),
   binance("Binance (annonces)", [48, 161], 30),
-  rss("SEC (communiqués)", "primaire", "https://www.sec.gov/news/pressreleases.rss", 60),
-  rss("Fed (communiqués)", "primaire", "https://www.federalreserve.gov/feeds/press_all.xml", 30),
+  rss("SEC (communiqués)", "primaire", "https://www.sec.gov/news/pressreleases.rss", 60, true),
+  { ...rss("Fed (communiqués)", "primaire", "https://www.federalreserve.gov/feeds/press_all.xml", 30), fetchBody: (h) => fedBody(h.link ?? "") },
   rss("Trump (Truth Social)", "primaire", "https://trumpstruth.org/feed", 30, true),
 ];

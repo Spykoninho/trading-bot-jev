@@ -10,6 +10,8 @@ const day = (t) => new Date(t).toLocaleDateString("fr-FR");
 const when = (t) => new Date(t).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 const base = (symbol) => symbol.replace("USDT", "");
 const short = (title) => (title.length > 180 ? `${title.slice(0, 180)}…` : title);
+// Titre + réponses de Jev aux questions propres à la source (décision de taux, escalade commerciale…)
+const titleCell = (j) => el("td", {}, short(j.headline.title), ...(j.details ? [el("small", {}, Object.entries(j.details).map(([k, v]) => `${k} : ${v}`).join(" · "))] : []));
 const ACTIONS = { BUY: "▲ Achat", SELL: "▼ Vente" };
 const TRENDS = { up: "▲ Tendance haussière", down: "▼ Tendance baissière", none: "■ Pas de tendance" };
 const INTERVALS = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14_400, "1d": 86_400 };
@@ -230,7 +232,7 @@ function renderNews() {
       j.asset === "unrelated" || j.assetConfidence < state.config.news.minConfidence ? { class: "ignored" } : {},
       el("td", { class: "nowrap" }, when(j.headline.publishedAt)),
       el("td", {}, j.headline.source),
-      el("td", {}, short(j.headline.title)),
+      titleCell(j),
       el("td", {}, j.asset),
       el("td", { class: "num" }, nf(j.assetConfidence)),
       el("td", {}, gauge(j.sentiment)),
@@ -270,7 +272,7 @@ function renderEvents() {
       el("td", { class: "nowrap" }, when(e.seenAt)),
       el("td", {}, e.judgment.headline.source),
       el("td", { class: "num nowrap" }, `${e.latencySec} s`),
-      el("td", {}, short(e.judgment.headline.title)),
+      titleCell(e.judgment),
       el("td", {}, base(e.symbol)),
       el("td", {}, el("span", { class: `action ${e.direction > 0 ? "up" : "down"}` }, `${e.direction > 0 ? "▲" : "▼"} ${signed(e.judgment.sentiment)}`)),
       el("td", { class: "num" }, nf(e.judgment.material)),

@@ -95,6 +95,8 @@ async function pollSource(source: Source): Promise<void> {
   const fresh = (await source.fetch()).filter((h) => !known.has(h.title));
   if (!fresh.length) return;
   state.seen = [...state.seen, ...fresh.map((h) => h.title)].slice(-MAX_SEEN);
+  // Texte complet récupéré pour les seuls titres nouveaux ; en cas d'échec, Jev juge le titre
+  if (source.fetchBody) for (const h of fresh) h.body = await source.fetchBody(h).catch(() => undefined);
   const judged = await judgeHeadlines(fresh);
   state.judgments = [...judged, ...state.judgments]
     .sort((a, b) => b.headline.publishedAt.localeCompare(a.headline.publishedAt))

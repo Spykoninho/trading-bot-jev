@@ -1,13 +1,18 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { judgeHeadlines, type Judgment } from "./brain.js";
+import { judgeHeadlines, judgeVersion, type Judgment } from "./brain.js";
 import { config } from "./config.js";
-import { FEEDS, HEADERS, parseRss, type Headline } from "./news.js";
+import { FEEDS, HEADERS, fedBody, parseRss, plain, type Headline } from "./news.js";
 
 // Archive des titres d'époque, avec les mêmes noms de sources que le direct
 const FILE = "data/history.json";
 const WAYBACK = "https://web.archive.org";
 // Flux RSS sans archive propre : on passe par leurs captures de la Wayback Machine
-const WAYBACK_FEEDS = { ...FEEDS, "SEC (communiqués)": "https://www.sec.gov/news/pressreleases.rss" };
+const WAYBACK_FEEDS: Record<string, { url: string; withBody: boolean }> = {
+  CoinDesk: { url: FEEDS.CoinDesk, withBody: false },
+  Cointelegraph: { url: FEEDS.Cointelegraph, withBody: false },
+  // Le site de la SEC refuse les robots, mais son flux contient le résumé de chaque communiqué
+  "SEC (communiqués)": { url: "https://www.sec.gov/news/pressreleases.rss", withBody: true },
+};
 const FED_INDEX = "https://www.federalreserve.gov/json/ne-press.json";
 const TRUMP_ARCHIVE = "https://ix.cnn.io/data/truth-social/truth_archive.json";
 const BINANCE_CATALOGS = [48, 161];
@@ -25,6 +30,15 @@ export async function loadArchive(): Promise<Archive> {
 async function save(archive: Archive): Promise<void> {
   await mkdir("data", { recursive: true });
   await writeFile(FILE, JSON.stringify(archive));
+}
+
+// Ajoute un titre, ou complète un titre déjà connu avec son texte et son lien
+function upsert(archive: Archive, index: Map<string, Headline>, h: Headline, from: Date): void {
+  if (!h.title || Date.parse(h.publishedAt) < from.getTime()) return;
+  const known = index.get(h.title);
+  if (known) return void Object.assign(known, { body: known.body ?? h.body, link: known.link ?? h.link });
+  index.set(h.title, h);
+  archive.headlines.push(h);
 }
 
 async function retry<T>(task: () => Promise<T>, attempts = 4): Promise<T> {
@@ -58,12 +72,13 @@ async function pool<T>(items: T[], size: number, worker: (item: T) => Promise<vo
 }
 
 async function collectHeadlines(archive: Archive, from: Date): Promise<void> {
-  const seen = new Set(archive.headlines.map((h) => h.title));
-  const done = new Set(archive.captures);
-  for (const [source, feedUrl] of Object.entries(WAYBACK_FEEDS)) {
-    const url = feedUrl.replace("https://", "");
+  const index = new Map(archive.headlines.map((h) => [h.title, h]));
+  for (const [source, { url: feedUrl, withBody }] of Object.entries(WAYBACK_FEEDS)) {
+    // Des titres archivés sans leur texte : on retélécharge les captures de cette source pour le récupérer
+    const incomplete = withBody && archive.headlines.some((h) => h.source === source && !h.body);
+    const done = new Set(incomplete ? [] : archive.captures);
     // L'index de la Wayback Machine est parfois surchargé : on saute la source, elle sera reprise au prochain lancement
-    const captures = await listCaptures(url, from).catch((err: Error) => console.error(`${source} : index Wayback indisponible (${err.message})`));
+    const captures = await listCaptures(feedUrl.replace("https://", ""), from).catch((err: Error) => console.error(`${source} : index Wayback indisponible (${err.message})`));
     if (!captures) continue;
     const todo = captures.map((ts) => `${source}:${ts}`).filter((id) => !done.has(id));
     console.log(`${source} : ${todo.length} captures à télécharger`);
@@ -77,12 +92,8 @@ async function collectHeadlines(archive: Archive, from: Date): Promise<void> {
           if (!res.ok) throw new Error(`capture ${res.status}`);
           return res.text();
         });
-        for (const h of parseRss(xml, source)) {
-          if (seen.has(h.title) || Date.parse(h.publishedAt) < from.getTime()) continue;
-          seen.add(h.title);
-          archive.headlines.push(h);
-        }
-        archive.captures.push(id);
+        for (const h of parseRss(xml, source, withBody)) upsert(archive, index, h, from);
+        if (!archive.captures.includes(id)) archive.captures.push(id);
       } catch (err) {
         console.error(`capture ${id} ignorée : ${(err as Error).message}`);
       }
@@ -112,21 +123,22 @@ async function getJson<T>(url: string): Promise<T> {
 
 // Sources primaires qui publient leur propre archive horodatée : Fed, posts de Trump, annonces Binance
 async function collectPrimary(archive: Archive, from: Date): Promise<void> {
-  const seen = new Set(archive.headlines.map((h) => h.title));
-  const add = (title: string, source: string, publishedAt: string) => {
-    if (!title || seen.has(title) || Date.parse(publishedAt) < from.getTime()) return;
-    seen.add(title);
-    archive.headlines.push({ title, source, publishedAt });
-  };
+  const index = new Map(archive.headlines.map((h) => [h.title, h]));
 
-  const fed = await getJson<{ d?: string; t?: string }[]>(FED_INDEX);
-  for (const item of fed) if (item.d && item.t) add(item.t.trim(), "Fed (communiqués)", easternToIso(item.d));
+  const fed = await getJson<{ d?: string; t?: string; l?: string }[]>(FED_INDEX);
+  for (const item of fed) if (item.d && item.t) upsert(archive, index, { title: item.t.trim(), source: "Fed (communiqués)", publishedAt: easternToIso(item.d), link: item.l }, from);
+  // Le titre d'un communiqué ne dit pas la décision : on va chercher le texte de chaque page
+  const pages = archive.headlines.filter((h) => h.source === "Fed (communiqués)" && !h.body && h.link);
+  console.log(`Fed : ${pages.length} pages à lire`);
+  await pool(pages, 4, async (h) => {
+    h.body = await retry(() => fedBody(h.link!)).catch(() => undefined);
+  });
 
-  // Posts réduits à leur texte, tronqué comme un titre : les posts image ou vidéo seuls sont ignorés
+  // Titre = début du post (clé stable), body = post entier ; les posts image ou vidéo seuls sont ignorés
   const posts = await getJson<{ created_at: string; content?: string }[]>(TRUMP_ARCHIVE);
   for (const post of posts) {
-    const body = (post.content ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-    if (body.length > 20) add(body.slice(0, 400), "Trump (Truth Social)", new Date(post.created_at).toISOString());
+    const body = plain(post.content ?? "");
+    if (body.length > 20) upsert(archive, index, { title: body.slice(0, 400), source: "Trump (Truth Social)", publishedAt: new Date(post.created_at).toISOString(), body }, from);
   }
 
   for (const catalog of BINANCE_CATALOGS) {
@@ -135,7 +147,7 @@ async function collectPrimary(archive: Archive, from: Date): Promise<void> {
         `https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=${catalog}&pageNo=${page}&pageSize=50`,
       );
       const articles = body.data?.catalogs?.[0]?.articles ?? [];
-      for (const a of articles) add(a.title, "Binance (annonces)", new Date(a.releaseDate).toISOString());
+      for (const a of articles) upsert(archive, index, { title: a.title, source: "Binance (annonces)", publishedAt: new Date(a.releaseDate).toISOString() }, from);
       if (!articles.length || articles.at(-1)!.releaseDate < from.getTime()) break;
     }
   }
@@ -143,23 +155,24 @@ async function collectPrimary(archive: Archive, from: Date): Promise<void> {
   await save(archive);
 }
 
-// Mêmes questions et même state que le direct : un titre par requête, jamais rejugé
+// Mêmes questions et même state que le direct. Un jugement est refait quand les questions de sa source ont changé de version.
 async function judgeArchive(archive: Archive): Promise<void> {
-  const judged = new Set(archive.judgments.map((j) => j.headline.title));
-  const todo = archive.headlines.filter((h) => !judged.has(h.title));
-  console.log(`Jev : ${todo.length} titres à juger (${judged.size} déjà faits)`);
+  const current = new Map(archive.judgments.map((j) => [j.headline.title, j]));
+  const todo = archive.headlines.filter((h) => (current.get(h.title)?.version ?? (current.has(h.title) ? 1 : 0)) < judgeVersion(h.source));
+  console.log(`Jev : ${todo.length} titres à juger (${current.size - todo.filter((h) => current.has(h.title)).length} à jour)`);
   for (let i = 0; i < todo.length; i += 16) {
     try {
-      archive.judgments.push(...(await judgeHeadlines(todo.slice(i, i + 16))));
+      for (const j of await judgeHeadlines(todo.slice(i, i + 16))) current.set(j.headline.title, j);
     } catch (err) {
       console.error(`lot ${i} ignoré, relancer pour le reprendre : ${(err as Error).message}`);
     }
     if (i % 800 === 0) {
       console.log(`  ${Math.min(i + 16, todo.length)}/${todo.length}`);
+      archive.judgments = [...current.values()];
       await save(archive);
     }
   }
-  archive.judgments.sort((a, b) => a.headline.publishedAt.localeCompare(b.headline.publishedAt));
+  archive.judgments = [...current.values()].sort((a, b) => a.headline.publishedAt.localeCompare(b.headline.publishedAt));
   await save(archive);
 }
 
