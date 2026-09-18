@@ -25,6 +25,7 @@ async function minutePrices(cache: Record<string, Prices>, j: Judgment): Promise
 
 function summarize(values: number[]) {
   const n = values.length;
+  if (n < 3) return `n=${n}`;
   const mean = values.reduce((a, b) => a + b, 0) / n;
   const sd = Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1));
   return `${(mean * 100).toFixed(3)} % (t=${(mean / (sd / Math.sqrt(n))).toFixed(1)}, ${Math.round((values.filter((v) => v > 0).length / n) * 100)} % gagnants)`;
@@ -43,7 +44,21 @@ const control = dull.filter((_, i) => i % Math.floor(dull.length / strong.length
 const cache: Record<string, Prices> = JSON.parse(await readFile(CACHE, "utf8").catch(() => "{}"));
 const table: Record<string, Record<string, string>> = {};
 
-for (const [group, events] of Object.entries({ "Fort impact, presse": strongOf("presse"), "Fort impact, sources primaires": strongOf("primaire"), "Témoin (titres anodins)": control })) {
+// Sous-groupes par question propre à la source : attention, plus on en teste, plus un bon résultat peut être dû au hasard
+const from = (source: string) => strong.filter((j) => j.headline.source.startsWith(source));
+const sure = (j: Judgment, question: string) => Number(j.details?.[question]) >= 0.8;
+const groups = {
+  "Fort impact, presse": strongOf("presse"),
+  "Fort impact, sources primaires": strongOf("primaire"),
+  "Fed : décisions de taux": from("Fed"),
+  "SEC : portée industrie ou acteur majeur": from("SEC"),
+  "Trump : escalade commerciale": from("Trump").filter((j) => sure(j, "Escalade commerciale")),
+  "Trump : escalade militaire": from("Trump").filter((j) => sure(j, "Escalade militaire")),
+  "Trump : soutien crypto": from("Trump").filter((j) => sure(j, "Soutien crypto")),
+  "Témoin (titres anodins)": control,
+};
+
+for (const [group, events] of Object.entries(groups)) {
   const returns: Record<string, number[]> = Object.fromEntries(Object.keys(HORIZONS).map((h) => [h, []]));
   const net: number[] = [];
   const last: Record<string, number> = {};

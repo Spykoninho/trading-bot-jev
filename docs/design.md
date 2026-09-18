@@ -140,3 +140,20 @@ Backtest, stop-loss, WebSocket temps réel, plusieurs stratégies, UI.
   sans contenu (post du 9 avril 2025, communiqués FOMC). Le direct juge désormais le texte du
   post Truth Social (`parseRss(..., body = true)`), pas le titre RSS coupé à ~90 caractères.
 - Piste suivante : texte complet et questions propres à chaque source, validés par le test en direct.
+
+## v10 — texte complet et questions par source
+
+- `Headline.body` : post Truth Social entier, texte de la page du communiqué Fed (`fedBody`,
+  bloc `#article`), résumé RSS du communiqué SEC (le site refuse les robots). `Source.fetchBody`
+  n'est appelé que pour les publications nouvelles. State Jev : `{ headline, full_text, source, published_at }`.
+- `SOURCE_RULES` (brain.ts) : questions ajoutées à la même requête (fan-out spéculatif) et
+  `compose` en code. Fed `rate_decision` ; Trump `trade_escalation`, `trade_easing`,
+  `crypto_support`, `military_escalation` (signaux opposés = neutre) ; SEC `scope` (petites
+  affaires plafonnées) ; Binance `kind`. `Judgment.details` pour l'affichage, `version` pour
+  ne rejuger que les sources dont les questions ont changé.
+- Bug corrigé : identité d'une publication = titre + date (`headlineKey`), sinon les FOMC
+  successifs étaient fusionnés en archive et le prochain aurait été ignoré en direct.
+- Résultats : replay +204,5 % avec Jev contre +194,8 % sans. Étude d'événements par
+  sous-groupe : baisses de taux suivies d'une baisse du BTC (déjà dans les prix), escalades
+  commerciales et militaires sans effet, « soutien crypto » de Trump seul candidat (n = 13).
+- Décision : pas de circuit de réaction immédiate tant que le test en direct n'a pas confirmé.

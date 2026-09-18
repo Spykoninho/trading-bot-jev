@@ -67,27 +67,27 @@ entrée plus tôt, sortie plus tard), et un risque réglementaire récent et for
 
 ### Avec ou sans TypeSafe : la mesure
 
-`npm run history` reconstitue les titres d'époque des mêmes sources que le direct : captures RSS
-de la Wayback Machine pour CoinDesk, Cointelegraph et la SEC, index horodaté de la Fed, archive
-publique des posts Truth Social de Trump, annonces Binance paginées. Soit 47 618 titres, tous
-jugés par Jev avec les questions du direct (≈ 1,40 $ de crédits au total). Le backtest les rejoue
-sans regard vers le futur : à chaque décision, seuls les titres déjà parus dans les 24 h sont
-visibles. Résultat sur BTC + ETH + SOL, 3 ans, frais inclus :
+`npm run history` reconstitue les publications d'époque des mêmes sources que le direct : captures
+RSS de la Wayback Machine pour CoinDesk, Cointelegraph et la SEC, index horodaté de la Fed (et le
+texte de chaque communiqué), archive publique des posts Truth Social de Trump, annonces Binance
+paginées. Soit 49 496 publications, toutes jugées par Jev comme en direct (≈ 2,50 $ de crédits au
+total, re-jugements compris). Le backtest les rejoue sans regard vers le futur : à chaque
+décision, seules les publications des 24 h précédentes sont visibles. Résultat sur
+BTC + ETH + SOL, 3 ans, frais inclus :
 
 | Variante | Rendement | Pire creux | Allers-retours |
 | --- | --- | --- | --- |
-| Stratégie **avec Jev**, toutes sources | **+199,3 %** | −31,6 % | 135 |
+| Stratégie **avec Jev**, texte complet et questions par source | **+204,5 %** | −30,4 % | 134 |
+| Stratégie avec Jev, titres seuls (version précédente) | +199,3 % | −31,6 % | 135 |
 | Stratégie sans news | +194,8 % | −31,3 % | 122 |
 | Acheter et garder | +68,9 % | −64,6 % | – |
 
-Lecture honnête : l'apport est **positif mais faible** (+4,5 points ; +3 avec la presse seule),
-et il vient surtout du décalage des seuils plus que du veto réglementaire. Il grandit quand on
-donne plus de poids aux news (jusqu'à +13 points avec un décalage de 2 %, puis il se dégrade à
-3 %), mais il n'est pas homogène entre actifs (négatif sur BTC seul, surtout porté par SOL). Sur
-~130 ordres, un tel écart reste compatible avec du bruit. Conclusion : sur une stratégie lente
-pilotée par le prix, les news changent peu la décision ; Jev y sert de garde-fou et de contexte
-lisible, pas de moteur de performance. Deux limites : on ne juge que le titre (ou le début du
-post), et un modèle entraîné après coup peut connaître la suite de certains événements.
+Lecture honnête : l'apport est **positif et il grandit quand Jev lit mieux** (+3 points avec la
+presse seule, +4,5 avec les sources primaires en titres, +9,7 avec le texte complet et les
+questions par source), mais il reste modeste et, sur ~130 ordres, compatible avec du bruit. Sur
+une stratégie lente pilotée par le prix, les news servent de garde-fou et de contexte lisible,
+pas de moteur de performance. Limite : un modèle entraîné après coup peut connaître la suite de
+certains événements.
 
 Tout se règle dans `src/config.ts`.
 
@@ -110,18 +110,31 @@ est aussi faible sur 2026 que sur 2023-2024, donc ce n'est pas la mémoire du mo
 fabrique. Pour la presse, le goulot n'est pas Jev (~100 ms) mais la **source** : un article
 décrit un mouvement déjà fait.
 
-Même étude sur les **sources primaires** (117 événements à fort impact, horodatés à l'instant de
-l'événement) : pas de mouvement avant, ce qui est logique, mais pas de dérive exploitable après
-non plus (−0,12 % à 1 h dans le sens de Jev, t = −1,9 ; « suivre Jev » : −0,32 % par ordre). Le
-détail explique pourquoi. Trump : le post du 9 avril 2025 « je relève les droits de douane sur la
-Chine à 125 % » est jugé baissier, mais il annonçait plus loin la pause de 90 jours et le BTC a
-pris +4,3 % en une heure ; le texte tronqué à 400 caractères cachait la partie décisive. SEC :
-16 événements sur 17 sont des poursuites pour fraude, jugées baissières, que le marché ignore.
-Fed : un seul fort impact sur 374 communiqués, car « Federal Reserve issues FOMC statement » ne
-dit pas si les taux montent. Binance : annonces sur de petites cryptos, sans effet sur le BTC.
-La leçon : sur une source primaire, la vitesse ne suffit pas ; il faut lire le **contenu complet**
-et poser des questions propres à chaque source, et l'échantillon (117) reste trop petit pour
-conclure. D'où le test en direct.
+Même étude sur les **sources primaires**, horodatées à l'instant de l'événement, en deux temps.
+
+*Titres seuls, questions génériques* : aucune dérive exploitable, et des erreurs de lecture. Le
+post de Trump du 9 avril 2025 (« je relève les droits de douane sur la Chine à 125 % ») était jugé
+baissier alors qu'il annonçait plus loin la pause de 90 jours (BTC +4,3 % en une heure) ; « Federal
+Reserve issues FOMC statement » ne dit pas si les taux montent ; et comme la Fed réutilise ce titre
+huit fois par an, identifier une publication par son seul titre les fusionnait toutes (corrigé :
+titre + date).
+
+*Texte complet et questions par source* (`SOURCE_RULES` dans `brain.ts`) : Jev lit juste. Le post
+du 9 avril donne « détente 0,95 et escalade 0,98 », donc neutre à fort impact ; les 25 communiqués
+FOMC sont classés sans erreur (18 statu quo, 6 baisses, 1 hausse). Résultats à +1 h, dans le sens
+prédit, entrée 2 min après la publication :
+
+| Sous-groupe | n | +1 h | +4 h | Lecture |
+| --- | --- | --- | --- | --- |
+| Fed : décisions de taux | 7 | −0,48 % | −0,75 % | Le prix monte **avant** (+0,43 % sur l'heure précédente) puis repart à contre-sens : les baisses étaient attendues. Ce qui compte est la surprise par rapport au consensus, absente du communiqué. |
+| Trump : escalade commerciale | 97 | 0,00 % | 0,00 % | Aucun effet mesurable sur le BTC. |
+| Trump : escalade militaire | 66 | −0,04 % | −0,09 % | Aucun effet mesurable. |
+| Trump : soutien à la crypto | 13 | **+0,63 %** (t = 2,1) | +1,10 % | Seul signal candidat, amplitude double de la normale ; +0,43 % net de frais, mais 13 cas et une dizaine de sous-groupes testés : à confirmer. |
+| SEC : portée industrie / acteur majeur | 10 | +0,09 % | +0,56 % | Trop peu de cas. |
+
+La leçon : lire vite ne suffit pas, lire **tout le texte** ne suffit pas non plus. Il faut que
+l'information soit une surprise pour le marché. Un seul sous-groupe est prometteur, sur trop peu
+de cas pour trader dessus : c'est au test en direct de trancher.
 
 ### Le test en direct sur sources primaires
 
