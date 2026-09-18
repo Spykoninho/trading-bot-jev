@@ -34,6 +34,14 @@ export async function fetchCandles(symbol: string, limit = 48): Promise<Candle[]
   return rows.map(([time, , , , close]) => ({ time, close: Number(close) }));
 }
 
+export async function fetchPrices(symbols: string[]): Promise<Record<string, number>> {
+  const url = `${config.binance.data}/api/v3/ticker/price?symbols=${encodeURIComponent(JSON.stringify(symbols))}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Binance prices: ${res.status}`);
+  const rows = (await res.json()) as { symbol: string; price: string }[];
+  return Object.fromEntries(rows.map((r) => [r.symbol, Number(r.price)]));
+}
+
 export async function marketSnapshot(symbol: string): Promise<MarketSnapshot> {
   return { symbol, ...techSignal(await fetchCandles(symbol)) };
 }

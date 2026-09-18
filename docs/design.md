@@ -49,3 +49,14 @@ tests/             strategy, market indicators, broker signature (vitest)
 ## Hors scope v1
 
 Backtest, stop-loss, WebSocket temps réel, plusieurs stratégies, UI.
+
+## v2 — interface web
+
+- **Portefeuille papier** (`portfolio.ts`) : 1 000 USDT, ordres au prix réel, frais 0,1 %,
+  persisté dans `data/state.json`, réinitialisable. Le testnet Binance devient un miroir
+  optionnel (`--live`) car son solde ne peut pas être remis à zéro.
+- **`bot.ts`** : état partagé ; `tick` (prix + équité, 1/min, sans Jev) et `cycle` (Jev).
+- **`server.ts`** : Hono sur `127.0.0.1`, protection CSRF ; `GET /api/state`,
+  `GET /api/candles/:symbol`, `POST /api/cycle`, `POST /api/reset`.
+- **`public/`** : vanilla JS + Chart.js servi depuis `node_modules`, palette dataviz de
+  référence, clair/sombre, titres RSS insérés en nœuds texte uniquement.

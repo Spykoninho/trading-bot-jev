@@ -45,7 +45,7 @@ describe("decide", () => {
   it("holds when fewer than minHeadlines relevant headlines", () => {
     const d = decide(market(1), [judgment({})], cfg);
     expect(d.action).toBe("HOLD");
-    expect(d.reason).toContain("only 1");
+    expect(d.reason).toContain("seulement 1");
   });
 
   it("buys when weighted news + tech exceed the buy threshold", () => {
@@ -57,7 +57,7 @@ describe("decide", () => {
   it("blocks a buy when regulatory risk is high", () => {
     const d = decide(market(0.5), [judgment({}), judgment({ regulatoryRisk: 0.9 })], cfg);
     expect(d.action).toBe("HOLD");
-    expect(d.reason).toContain("regulatory");
+    expect(d.reason).toContain("réglementaire");
   });
 
   it("sells when the score is below the sell threshold", () => {

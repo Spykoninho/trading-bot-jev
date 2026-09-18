@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>trading-bot-jev</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <div>
+        <h1>trading-bot-jev</h1>
+        <p id="mode" class="muted"></p>
+      </div>
+      <div class="actions">
+        <button id="run" class="primary">Lancer un cycle</button>
+        <button id="reset">Recommencer à zéro</button>
+      </div>
+    </header>
+    <p id="status" role="status" class="status" hidden></p>
+
+    <main>
+      <section class="portfolio panel" aria-labelledby="portfolio-title">
+        <div class="summary">
+          <h2 id="portfolio-title">Portefeuille</h2>
+          <p id="equity" class="hero">–</p>
+          <p id="pnl" class="delta"></p>
+          <dl id="holdings"></dl>
+        </div>
+        <figure>
+          <figcaption>Valeur du portefeuille depuis le départ, en USDT</figcaption>
+          <div class="chart tall"><canvas id="equityChart"></canvas></div>
+        </figure>
+      </section>
+
+      <section id="prices" class="prices" aria-label="Cours des cryptos suivies"></section>
+
+      <section class="panel" aria-labelledby="cycles-title">
+        <h2 id="cycles-title">Décisions du bot</h2>
+        <p class="muted">
+          À chaque cycle, Jev juge les titres de presse ; le code combine ces jugements avec le signal technique. Le
+          point montre le score final entre vendre (−1) et acheter (+1), les zones colorées sont les seuils d'action.
+        </p>
+        <div id="cycles"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="trades-title">
+        <h2 id="trades-title">Ordres exécutés</h2>
+        <div id="trades"></div>
+      </section>
+    </main>
+
+    <script src="vendor/chart.js"></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

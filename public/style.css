@@ -1,0 +1,390 @@
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --series: #2a78d6;
+  --good: #0ca30c;
+  --critical: #d03b3b;
+  --up-text: #006300;
+  --down-text: #a12a2a;
+  --neutral: #f0efec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --series: #3987e5;
+    --up-text: #0ca30c;
+    --down-text: #e66767;
+    --neutral: #383835;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 400 15px/1.5 "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+h1,
+h2,
+p,
+dl,
+figure {
+  margin: 0;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--ink-2);
+  max-width: 78ch;
+}
+
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px clamp(16px, 4vw, 40px);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  font: inherit;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--axis);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--surface);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+button:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--series);
+  outline-offset: 2px;
+}
+
+.status {
+  margin: 0 clamp(16px, 4vw, 40px) 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.status.error {
+  border-color: var(--critical);
+}
+
+main {
+  display: grid;
+  gap: 16px;
+  padding: 0 clamp(16px, 4vw, 40px) 48px;
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  display: grid;
+  gap: 12px;
+}
+
+/* Sans min-width: 0, un canvas Chart.js élargit sa cellule de grille et déborde */
+.panel > *,
+.prices > * {
+  min-width: 0;
+}
+
+.portfolio {
+  grid-template-columns: minmax(240px, 300px) 1fr;
+  gap: 32px;
+  align-items: start;
+}
+
+.summary {
+  display: grid;
+  gap: 4px;
+}
+
+.hero {
+  font-size: 52px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.hero small {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink-2);
+  letter-spacing: 0;
+}
+
+.delta {
+  font-weight: 500;
+}
+
+.delta.up {
+  color: var(--up-text);
+}
+
+.delta.down {
+  color: var(--down-text);
+}
+
+dl {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+dt {
+  color: var(--ink-2);
+}
+
+dd {
+  margin: 0;
+  text-align: right;
+}
+
+dd small {
+  display: block;
+  color: var(--muted);
+}
+
+figcaption {
+  color: var(--ink-2);
+  margin-bottom: 8px;
+}
+
+.chart {
+  position: relative;
+  height: 220px;
+}
+
+.chart.tall {
+  height: 260px;
+}
+
+.prices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+.price-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.price-head strong {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+/* Cycles */
+details {
+  border-top: 1px solid var(--grid);
+}
+
+summary {
+  cursor: pointer;
+  padding: 12px 0;
+  display: grid;
+  gap: 8px;
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+.cycle-head {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ink-2);
+}
+
+.cycle-head::after {
+  content: "Voir les jugements de Jev";
+  color: var(--series);
+}
+
+details[open] .cycle-head::after {
+  content: "Masquer les jugements";
+}
+
+.decision {
+  display: grid;
+  grid-template-columns: 90px 200px 92px 1fr;
+  gap: 16px;
+  align-items: center;
+}
+
+.decision .why {
+  color: var(--ink-2);
+}
+
+.action {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.action.BUY {
+  color: var(--up-text);
+}
+
+.action.SELL {
+  color: var(--down-text);
+}
+
+/* Jauge divergente : −1 vendre, +1 acheter */
+.gauge {
+  display: grid;
+  grid-template-columns: 1fr 44px;
+  gap: 8px;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--neutral);
+}
+
+.track::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--axis);
+}
+
+.track i {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid var(--surface);
+  transform: translate(-50%, -50%);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+th,
+td {
+  padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--grid);
+  vertical-align: middle;
+}
+
+td.num,
+th.num {
+  text-align: right;
+}
+
+td .gauge {
+  min-width: 150px;
+}
+
+.ignored td {
+  color: var(--muted);
+}
+
+.empty {
+  color: var(--ink-2);
+  padding: 12px 0;
+}
+
+@media (max-width: 820px) {
+  .portfolio {
+    grid-template-columns: 1fr;
+  }
+
+  .decision {
+    grid-template-columns: 80px 1fr 80px;
+  }
+
+  .decision .why {
+    grid-column: 1 / -1;
+  }
+
+  .hero {
+    font-size: 40px;
+  }
+}

@@ -14,8 +14,11 @@
   "type": "module",
   "private": "true",
   "dependencies": {
+    "@hono/node-server": "^2.1.1",
     "@typesafe-ai/sdk": "^0.6.0",
-    "fast-xml-parser": "^5.11.1"
+    "chart.js": "^4.5.1",
+    "fast-xml-parser": "^5.11.1",
+    "hono": "^4.13.8"
   },
   "devDependencies": {
     "@types/node": "^26.6.1",

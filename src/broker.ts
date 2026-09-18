@@ -23,11 +23,6 @@ async function signedRequest<T>(method: "GET" | "POST", path: string, params: Re
   return res.json() as Promise<T>;
 }
 
-export async function getBalances(): Promise<Record<string, number>> {
-  const { balances } = await signedRequest<{ balances: { asset: string; free: string }[] }>("GET", "/api/v3/account", {});
-  return Object.fromEntries(balances.filter((b) => Number(b.free) > 0).map((b) => [b.asset, Number(b.free)]));
-}
-
 // Ordre MARKET libellé en USDT : le testnet calcule lui-même la quantité d'actif
 export function placeMarketOrder(symbol: string, side: Side, quoteUsdt: number): Promise<Order> {
   return signedRequest<Order>("POST", "/api/v3/order", {

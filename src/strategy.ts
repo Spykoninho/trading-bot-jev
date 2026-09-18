@@ -50,7 +50,7 @@ export function decide(market: MarketSnapshot, judgments: Judgment[], cfg: Strat
 
   // Confidence gating : pas assez d'évidence → on n'agit pas plutôt que de deviner
   if (news.score === null || news.count < cfg.thresholds.minHeadlines) {
-    return decision("HOLD", 0, `only ${news.count} relevant headline(s)`);
+    return decision("HOLD", 0, `seulement ${news.count} titre(s) pertinent(s)`);
   }
 
   const score = cfg.weights.news * news.score + cfg.weights.tech * market.signal;
@@ -58,10 +58,10 @@ export function decide(market: MarketSnapshot, judgments: Judgment[], cfg: Strat
   if (score >= cfg.thresholds.buy) {
     // Règle séparée du score : un risque réglementaire fort bloque tout achat
     if (news.regulatoryRisk >= cfg.thresholds.regulatoryRisk) {
-      return decision("HOLD", score, `buy blocked by regulatory risk ${news.regulatoryRisk.toFixed(2)}`);
+      return decision("HOLD", score, `achat bloqué : risque réglementaire ${news.regulatoryRisk.toFixed(2)}`);
     }
-    return decision("BUY", score, "news and tech above buy threshold");
+    return decision("BUY", score, "score au-dessus du seuil d'achat");
   }
-  if (score <= cfg.thresholds.sell) return decision("SELL", score, "news and tech below sell threshold");
-  return decision("HOLD", score, "score within neutral band");
+  if (score <= cfg.thresholds.sell) return decision("SELL", score, "score sous le seuil de vente");
+  return decision("HOLD", score, "score dans la zone neutre");
 }
