@@ -1,19 +1,15 @@
 # trading-bot-jev
 
-Bot de **micro-trading** crypto pédagogique : il suit les prix Binance **en temps réel**, fait
-juger chaque nouvelle news par **Jev**, le modèle System One de [TypeSafe](https://typesafe.ai),
-et trade en continu sur un **portefeuille papier** de 1 000 USDT, visible dans une interface web
-et réinitialisable à volonté.
+Bot de trading crypto pédagogique : il suit les prix Binance **en temps réel**, fait juger chaque
+nouvelle news par **Jev**, le modèle System One de [TypeSafe](https://typesafe.ai), et applique
+une stratégie de **suivi de tendance** sur un **portefeuille papier** de 1 000 USDT, visible dans
+une interface web et réinitialisable à volonté.
 
-L'idée à retenir : le code garde le contrôle (signal de prix, poids, seuils, sorties, risque) ;
-Jev ne fait que des **jugements typés** sur du texte, en ~100 ms, là où un LLM classique serait
-trop lent et trop cher pour du temps réel.
+L'idée à retenir : le code garde le contrôle (tendance, seuils, taille des positions,
+exécution) ; Jev ne fait que des **jugements typés** sur du texte, en ~100 ms par titre.
 
-> Avertissement honnête : sur 3 h de prix réels, cette stratégie gagne ~+0,5 % **sans frais**
-> mais perd presque tous ses allers-retours avec les 0,1 % de frais Binance par ordre. Le gain
-> moyen d'un micro-trade (~0,02 %) est dix fois plus petit que les frais (0,2 % l'aller-retour).
-> La simulation applique les vrais frais et affiche ce qu'ils coûtent. Aucune vraie monnaie
-> n'est jamais en jeu, et rien ici n'est un conseil d'investissement.
+> Aucune vraie monnaie n'est jamais en jeu, et rien ici n'est un conseil d'investissement. Un
+> backtest décrit le passé : il ne garantit rien pour la suite.
 
 ## Setup
 
@@ -31,55 +27,70 @@ cp .env.example .env   # puis remplir TYPESAFE_API_KEY
 ```bash
 npm start             # bot + interface sur http://localhost:3210
 npm start -- --live   # idem, chaque ordre papier est aussi envoyé au testnet Binance
-FEE=0 npm start       # voir la stratégie brute, sans frais
+npm run backtest      # backtest 3 ans en console
 npm test
 npm run typecheck
 ```
 
-## Interface
+## Stratégie : pourquoi le suivi de tendance
 
-- **Vitesse** : Pause, Lent (10 s), Normal (2 s), Rapide (1 s). C'est la cadence à laquelle le bot
-  prend ses décisions ; les prix, eux, arrivent toujours chaque seconde.
-- **Portefeuille** : valeur en direct, gain/perte, cash, positions avec leur prix d'entrée,
-  nombre d'allers-retours, taux de réussite, frais payés, et courbe de valeur (verte au-dessus
-  du capital de départ, rouge en dessous).
-- **Cours** : chandeliers en direct, intervalles `1m 5m 15m 1h 4h 1D`, flèche ▲ à chaque achat
-  et ▼ à chaque vente. Sous chaque graphique, la décision en cours : score entre −1 et +1,
-  seuils d'entrée/sortie, signal micro, biais news et raison.
-- **Ordres du bot** : prix, montant, résultat net de frais et raison de chaque ordre.
-- **Titres jugés par Jev** : les jugements bruts ; les titres ignorés sont grisés.
-- **Recommencer** remet le portefeuille à 1 000 USDT.
+Trois approches ont été comparées sur de vraies bougies Binance, frais de 0,1 % par ordre inclus :
 
-L'état (portefeuille + jugements) est persisté dans `data/state.json`.
+| Approche | Résultat |
+| --- | --- |
+| Micro-trading (EMA 10 s / 60 s, 3 h de prix à la seconde) | ≈ +0,5 % brut, mais quasiment **aucun aller-retour gagnant** après frais : le gain moyen (~0,02 %) est dix fois plus petit que les 0,2 % de frais |
+| Retour à la moyenne (RSI) et tendance en bougies 1h | mangés par les frais et les faux signaux |
+| **Tendance EMA 200 en bougies 4h, bande de 1 %** | **+155 %** sur 3 ans, pire creux −32 % (acheter et garder : +62 %, pire creux −59 %) |
 
-## Stratégie
-
-Chaque seconde le dernier prix de chaque symbole est échantillonné. À chaque décision :
+La règle retenue est volontairement la plus classique :
 
 ```
-micro = écart relatif EMA 10 s / EMA 60 s, borné à [-1, 1]
-news  = sentiment moyen des titres pertinents, pondéré par impact × confiance × fraîcheur
-score = 0,7 × micro + 0,3 × news
+tendance haussière  si une bougie 4h clôture au-dessus de EMA 200 × 1,01  → acheter
+tendance baissière  si une bougie 4h clôture sous      EMA 200 × 0,99  → tout vendre
+entre les deux      on ne change rien (hystérésis contre les faux signaux)
 ```
 
-- **Entrée** si `score ≥ 0,4`, sauf risque réglementaire récent et fort, et 20 s après une vente.
-- **Sortie** sur objectif (+0,3 %), stop-loss (−0,2 %), durée max (5 min) ou score `≤ −0,2`.
-- Une position max par actif, ordres de 100 USDT, frais 0,1 %.
+- Le capital est réparti à parts égales entre les symboles, et investi en entier quand la
+  tendance est haussière ; en cash sinon.
+- Les variantes voisines (EMA 150/300, bande 0 à 2 %) donnent +127 à +161 % : le résultat ne
+  dépend pas d'un réglage chanceux. Le long/short n'apporte rien de robuste.
+- ~12 allers-retours par an et par actif, dont seulement un quart de gagnants : le suivi de
+  tendance perd souvent un peu et gagne rarement beaucoup. En marché baissier il ne gagne pas,
+  il évite surtout de perdre (−4 % la dernière année contre −40 % pour acheter et garder).
+
+**Rôle de Jev** : le biais news décale les deux seuils d'au plus ±0,5 % (news positives :
+entrée plus tôt, sortie plus tard), et un risque réglementaire récent et fort bloque tout achat.
+Ce volet n'est pas backtesté, faute d'historique de titres.
 
 Tout se règle dans `src/config.ts`.
+
+## Interface
+
+- **Portefeuille en direct** : valeur à la seconde, gain/perte, cash, positions avec prix
+  d'entrée, frais payés, courbe de valeur (verte au-dessus du capital de départ, rouge en dessous).
+- **Cours** : chandeliers en direct, intervalles `1m 5m 15m 1h 4h 1D`, flèches ▲▼ sur les ordres,
+  seuils d'achat et de vente en pointillés. Sous chaque graphique : tendance, position du prix
+  par rapport à l'EMA, biais news et raison de la décision.
+- **Replay** : la stratégie rejouée sur 3 ans d'historique réel, contre « acheter et garder »,
+  avec vitesse réglable (Pause, ×1, ×5, ×25, Fin). Même fonction `decide` que le direct.
+- **Ordres du bot** et **Titres jugés par Jev** (les titres ignorés sont grisés).
+- **Recommencer** remet le portefeuille à 1 000 USDT ; le bot se réaligne aussitôt sur la tendance.
+
+L'état (portefeuille + jugements) est persisté dans `data/state.json`.
 
 ## Architecture
 
 ```
-market.ts     bougies REST + flux WebSocket miniTicker Binance (mainnet, sans clé), EMA, signal micro
-news.ts       RSS CoinDesk + Cointelegraph
-brain.ts      1 requête TypeSafe par titre : asset, sentiment, material, regulatory_risk
-strategy.ts   biais news (composite scoring + fraîcheur), entrées et sorties
-portfolio.ts  portefeuille papier : ordres au prix réel, frais, P&L par aller-retour
-broker.ts     miroir optionnel : ordres MARKET signés HMAC sur le testnet Binance
-bot.ts        boucles temps réel (prix 1 s, décisions à vitesse réglable, news 60 s) + événements
-server.ts     API Hono locale, flux SSE vers l'interface, fichiers statiques
-public/       interface vanilla JS + TradingView lightweight-charts, sans build
+market.ts       bougies REST (+ historique paginé) et flux WebSocket miniTicker Binance, sans clé
+news.ts         RSS CoinDesk + Cointelegraph
+brain.ts        1 requête TypeSafe par titre : asset, sentiment, material, regulatory_risk
+strategy.ts     biais news, tendance EMA avec hystérésis, décision BUY / SELL / HOLD
+portfolio.ts    portefeuille papier : ordres au prix réel, frais, P&L par aller-retour
+backtest.ts     rejoue `decide` bougie par bougie : décision à la clôture, exécution à l'ouverture suivante
+broker.ts       miroir optionnel : ordres MARKET signés HMAC sur le testnet Binance
+bot.ts          boucles (prix 1 s, bougies et news 60 s), événements, cache du backtest
+server.ts       API Hono locale, flux SSE vers l'interface, fichiers statiques
+public/         interface vanilla JS + TradingView lightweight-charts, sans build
 ```
 
 ## Notions TypeSafe utilisées
@@ -94,7 +105,7 @@ public/       interface vanilla JS + TradingView lightweight-charts, sans build
 | **Composite scoring** | `strategy.ts` | Le modèle donne des signaux atomiques ; le code les combine avec des poids qu'il contrôle. |
 | **Confidence gating** | `strategy.ts` | Un titre dont l'actif est peu sûr (`confidence < 0,5`) ou hors sujet est ignoré. |
 | **Fraîcheur de l'état** | `strategy.ts` | Un jugement vieillit : demi-vie de 3 h sur le sentiment et le risque réglementaire. |
-| **Règle séparée** | `strategy.ts` | Un risque réglementaire élevé bloque toute entrée, indépendamment du score pondéré. |
+| **Règle séparée** | `strategy.ts` | Un risque réglementaire élevé bloque toute entrée, indépendamment de la tendance. |
 | **Jugements réutilisables** | `bot.ts` | Chaque titre n'est jugé qu'une fois, puis conservé : changer les poids ne rappelle pas le modèle. |
 
 ## Notions de simulation
@@ -102,12 +113,14 @@ public/       interface vanilla JS + TradingView lightweight-charts, sans build
 - **Mainnet public** : bougies via REST (`api.binance.com`), prix en direct via WebSocket
   (`stream.binance.com`, flux `miniTicker`), sans authentification.
 - **Portefeuille papier** : chaque ordre est exécuté au dernier prix réel, plafonné par le cash,
-  avec 0,1 % de frais ; une vente clôture toute la position. Pas de glissement ni de carnet
-  d'ordres simulés : en réel, l'exécution serait un peu moins bonne.
+  avec 0,1 % de frais ; une vente clôture toute la position. Pas de glissement simulé.
+- **Décision sur bougies clôturées** : la bougie en cours n'est jamais utilisée, en direct comme
+  en backtest, pour ne pas réagir à un mouvement qui s'efface avant la clôture.
 - **Spot Testnet** (`testnet.binance.vision`) : même API que Binance, solde fictif non
   réinitialisable. Endpoints signés : `X-MBX-APIKEY`, `timestamp`, `signature` HMAC-SHA256.
 
 ## Limites
 
-Pas de backtest intégré, long uniquement, pas de glissement simulé. Le serveur n'écoute que sur
-`127.0.0.1` et n'a pas d'authentification : ne pas l'exposer tel quel.
+Long uniquement, deux actifs très corrélés, pas de glissement simulé, 3 ans d'historique
+seulement (un cycle haussier puis baissier). Le serveur n'écoute que sur `127.0.0.1` et n'a pas
+d'authentification : ne pas l'exposer tel quel.

@@ -369,3 +369,37 @@ td .gauge {
     font-size: 40px;
   }
 }
+
+/* Replay */
+button.primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--page);
+}
+
+button.primary:hover {
+  background: var(--ink-2);
+}
+
+.legend {
+  display: flex;
+  gap: 20px;
+  color: var(--ink-2);
+}
+
+.key {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  margin-right: 8px;
+  vertical-align: middle;
+  border-top: 2px solid var(--muted);
+}
+
+.key.strategy {
+  border-color: var(--accent);
+}
+
+[hidden] {
+  display: none !important;
+}

@@ -6,7 +6,8 @@
   "scripts": {
     "test": "vitest run",
     "start": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "backtest": "tsx src/backtest-cli.ts"
   },
   "keywords": [],
   "author": "",

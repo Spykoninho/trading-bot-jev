@@ -72,3 +72,16 @@ Backtest, stop-loss, WebSocket temps réel, plusieurs stratégies, UI.
   en SSE. Vitesse de décision réglable (`POST /api/speed/:ms`).
 - **UI** : thème sombre, chandeliers `lightweight-charts`, intervalles 1m→1D, bougie en cours
   animée par le flux, courbe d'équité en série baseline.
+
+## v4 — suivi de tendance choisi par backtest
+
+- Recherche sur 3 ans de bougies réelles (frais 0,1 %, découpage en 3 années) : le micro-trading
+  et le RSI perdent après frais ; le suivi de tendance 4h/1j bat « acheter et garder ».
+- Retenu : EMA 200 en 4h avec bande d'hystérésis de 1 %, long uniquement, capital réparti à
+  parts égales. +155 % contre +62 %, pire creux −32 % contre −59 %. Plateau robuste (EMA 150–300,
+  bande 0–2 % : +127 à +161 %). Long/short et vote de signaux écartés (pas mieux, plus de rotation).
+- `backtest.ts` rejoue la même fonction `decide` que le direct : décision à la clôture,
+  exécution à l'ouverture suivante. `GET /api/backtest` (cache 1 h) alimente le replay animé.
+- Jev : biais news = décalage des seuils d'au plus ±0,5 %, veto réglementaire conservé. Non backtesté.
+- Le direct ne décide que sur bougies clôturées (rafraîchies chaque minute) ; au démarrage et
+  après un reset, le bot s'aligne immédiatement sur la tendance courante.

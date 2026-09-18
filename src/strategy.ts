@@ -1,33 +1,34 @@
 import type { Judgment } from "./brain.js";
 import { config, type Config } from "./config.js";
-import { microSignal } from "./market.js";
 import type { Position } from "./portfolio.js";
 
 export type Action = "BUY" | "SELL" | "HOLD";
+export type Trend = "up" | "down" | "none";
 
 export type Decision = {
   symbol: string;
   price: number;
   action: Action;
-  score: number;
+  trend: Trend;
+  ema: number;
+  buyAbove: number;
+  sellBelow: number;
   news: number | null;
-  micro: number;
   headlinesUsed: number;
   reason: string;
 };
 
 export type DecisionInput = {
   symbol: string;
-  prices: number[];
+  closes: number[];
   judgments: Judgment[];
   position?: Position;
-  lastExit?: number;
   now?: number;
 };
 
-type StrategyConfig = Pick<Config, "weights" | "micro" | "news">;
+type StrategyConfig = Pick<Config, "strategy" | "news">;
 
-const pct = (ratio: number) => `${ratio >= 0 ? "+" : "−"}${Math.abs(ratio * 100).toFixed(2)} %`;
+const pct = (ratio: number) => `${ratio >= 0 ? "+" : "−"}${Math.abs(ratio * 100).toFixed(1)} %`;
 
 export function newsBias(judgments: Judgment[], base: string, now: number, cfg: StrategyConfig["news"]) {
   const relevant = judgments.filter((j) => (j.asset === base || j.asset === "crypto") && j.assetConfidence >= cfg.minConfidence);
@@ -46,33 +47,41 @@ export function newsBias(judgments: Judgment[], base: string, now: number, cfg: 
   return { score: weights > 0 ? sum / weights : null, count: relevant.length, regulatoryRisk };
 }
 
-export function decide(input: DecisionInput, cfg: StrategyConfig = config): Decision {
-  const { symbol, prices, position } = input;
-  const now = input.now ?? Date.now();
-  const m = cfg.micro;
-  const price = prices.at(-1) ?? 0;
-  const news = newsBias(input.judgments, symbol.replace("USDT", ""), now, cfg.news);
-  const micro = microSignal(prices, m);
-  // Sans news pertinente, le biais vaut 0 : le signal micro décide seul
-  const score = cfg.weights.news * (news.score ?? 0) + cfg.weights.tech * micro;
-  const decision = (action: Action, reason: string): Decision => ({ symbol, price, action, score, news: news.score, micro, headlinesUsed: news.count, reason });
+// Tendance avec hystérésis : haussière au-dessus de EMA×(1+bande), baissière sous EMA×(1−bande), inchangée entre les deux.
+// `tilt` décale les seuils de la dernière bougie seulement : des news positives font entrer plus tôt et sortir plus tard.
+export function trendRegime(closes: number[], s: { emaPeriod: number; band: number }, tilt = 0) {
+  const k = 2 / (s.emaPeriod + 1);
+  let ema = closes[0] ?? 0;
+  let trend: Trend = "none";
+  closes.forEach((close, i) => {
+    if (i) ema = close * k + ema * (1 - k);
+    if (i < s.emaPeriod) return;
+    const shift = i === closes.length - 1 ? tilt : 0;
+    if (close > ema * (1 + s.band - shift)) trend = "up";
+    else if (close < ema * (1 - s.band - shift)) trend = "down";
+  });
+  return { trend: trend as Trend, ema, buyAbove: ema * (1 + s.band - tilt), sellBelow: ema * (1 - s.band - tilt) };
+}
 
-  if (prices.length < m.slow) return decision("HOLD", `collecte des prix (${prices.length}/${m.slow} s)`);
+// `closes` = bougies clôturées uniquement : on ne décide jamais sur une bougie en cours
+export function decide(input: DecisionInput, cfg: StrategyConfig = config): Decision {
+  const { symbol, closes, position } = input;
+  const s = cfg.strategy;
+  const price = closes.at(-1) ?? 0;
+  const news = newsBias(input.judgments, symbol.replace("USDT", ""), input.now ?? Date.now(), cfg.news);
+  const regime = trendRegime(closes, s, s.newsTilt * (news.score ?? 0));
+  const decision = (action: Action, reason: string): Decision => ({ symbol, price, action, ...regime, news: news.score, headlinesUsed: news.count, reason });
+
+  if (closes.length < s.emaPeriod * 2) return decision("HOLD", `historique insuffisant (${closes.length} bougies)`);
 
   if (position) {
-    // Sorties gérées en code : objectif, stop-loss, durée max, puis retournement du signal
-    const gain = price / position.entryPrice - 1;
-    const heldSec = (now - Date.parse(position.entryTime)) / 1000;
-    if (gain >= m.takeProfit) return decision("SELL", `objectif atteint (${pct(gain)})`);
-    if (gain <= -m.stopLoss) return decision("SELL", `stop-loss (${pct(gain)})`);
-    if (heldSec >= m.maxHoldSec) return decision("SELL", `durée max atteinte (${pct(gain)})`);
-    if (score <= m.exit) return decision("SELL", `signal retourné (${pct(gain)})`);
-    return decision("HOLD", `en position depuis ${Math.round(heldSec)} s (${pct(gain)})`);
+    const gain = pct(price / position.entryPrice - 1);
+    if (regime.trend === "down") return decision("SELL", `tendance cassée : clôture sous le seuil de vente (${gain})`);
+    return decision("HOLD", `en position, tendance haussière (${gain})`);
   }
 
-  if (input.lastExit && now - input.lastExit < m.cooldownSec * 1000) return decision("HOLD", "pause après une vente");
-  if (score < m.enter) return decision("HOLD", "pas de signal d'entrée");
-  // Règle séparée du score : un risque réglementaire récent et fort bloque toute entrée
+  if (regime.trend !== "up") return decision("HOLD", "hors marché : pas de tendance haussière");
+  // Règle séparée : un risque réglementaire récent et fort bloque toute entrée, quelle que soit la tendance
   if (news.regulatoryRisk >= cfg.news.regulatoryRisk) return decision("HOLD", `achat bloqué : risque réglementaire ${news.regulatoryRisk.toFixed(2)}`);
-  return decision("BUY", "signal d'entrée");
+  return decision("BUY", "tendance haussière : clôture au-dessus du seuil d'achat");
 }

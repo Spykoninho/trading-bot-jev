@@ -15,17 +15,14 @@
         <h1>trading-bot-jev</h1>
         <p id="feed" class="feed"></p>
       </div>
-      <div class="controls">
-        <div id="speed" class="segmented" role="group" aria-label="Vitesse de décision du bot"></div>
-        <button id="reset">Recommencer</button>
-      </div>
+      <button id="reset">Recommencer</button>
     </header>
     <p id="status" role="status" class="status" hidden></p>
 
     <main>
       <section class="portfolio panel" aria-labelledby="portfolio-title">
         <div class="summary">
-          <h2 id="portfolio-title">Portefeuille</h2>
+          <h2 id="portfolio-title">Portefeuille en direct</h2>
           <p id="equity" class="hero">–</p>
           <p id="pnl" class="delta"></p>
           <dl id="holdings"></dl>
@@ -39,12 +36,33 @@
 
       <div class="toolbar">
         <div id="intervals" class="segmented" role="group" aria-label="Durée d'une bougie"></div>
-        <p class="muted">▲ achat du bot, ▼ vente du bot</p>
+        <p class="muted">▲ achat du bot, ▼ vente du bot. Lignes pointillées : seuils d'achat et de vente de la stratégie.</p>
       </div>
       <section id="markets" class="markets" aria-label="Cours en direct"></section>
 
+      <section class="panel" aria-labelledby="replay-title">
+        <div class="toolbar">
+          <h2 id="replay-title">Replay de la stratégie sur l'historique réel</h2>
+          <div class="controls">
+            <button id="replayStart" class="primary">Rejouer</button>
+            <div id="replaySpeed" class="segmented" role="group" aria-label="Vitesse du replay"></div>
+          </div>
+        </div>
+        <p class="muted">
+          La stratégie agit quelques fois par mois : le replay la fait défiler sur plusieurs années de bougies Binance,
+          avec la même fonction de décision que le direct, frais inclus. Le biais news de Jev n'y est pas rejoué, faute
+          d'historique de titres.
+        </p>
+        <p id="replayLegend" class="legend" hidden>
+          <span><i class="key strategy"></i>Stratégie</span>
+          <span><i class="key hold"></i>Acheter et garder</span>
+        </p>
+        <div id="replayChart" class="chart" hidden></div>
+        <p id="replayStats" role="status"></p>
+      </section>
+
       <section class="panel" aria-labelledby="trades-title">
-        <h2 id="trades-title">Ordres du bot</h2>
+        <h2 id="trades-title">Ordres du bot en direct</h2>
         <div id="trades" class="scroll"></div>
       </section>
 
@@ -52,7 +70,8 @@
         <h2 id="news-title">Titres jugés par Jev</h2>
         <p class="muted">
           Jev lit chaque nouveau titre dès sa parution. Le biais news de chaque actif est la moyenne des sentiments,
-          pondérée par l'impact marché, la confiance du modèle et la fraîcheur du titre.
+          pondérée par l'impact marché, la confiance du modèle et la fraîcheur du titre. Il décale les seuils de la
+          stratégie, et un risque réglementaire fort bloque tout achat.
         </p>
         <div id="news" class="scroll"></div>
       </section>
