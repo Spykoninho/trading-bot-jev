@@ -15,6 +15,7 @@ const EVENTS_FILE = "data/events.json";
 const MAX_JUDGMENTS = 100;
 const MAX_SEEN = 3000;
 const MAX_EVENTS = 5000;
+const MAX_WAITS = 300;
 
 export const state = {
   portfolio: newPortfolio(config.startCash),
@@ -24,6 +25,9 @@ export const state = {
   // Publications déjà jugées (titre + date de parution), toutes sources confondues : jamais rejugées ni recomptées
   seen: [] as string[],
   events: [] as TrackedEvent[],
+  // « Attendre » est aussi une décision : une entrée par actif à chaque clôture de bougie sans ordre
+  waits: [] as { time: string; symbol: string; price: number; reason: string }[],
+  lastCandle: {} as Record<string, number>,
   prices: {} as Record<string, number>,
   closes: {} as Record<string, number[]>,
   signals: {} as Record<string, Decision>,
@@ -42,7 +46,8 @@ export function subscribe(fn: Listener): () => void {
 
 async function persist(): Promise<void> {
   await mkdir("data", { recursive: true });
-  await writeFile(STATE_FILE, JSON.stringify({ portfolio: state.portfolio, active: state.active, judgments: state.judgments, seen: state.seen }));
+  const { portfolio, active, judgments, seen, waits, lastCandle } = state;
+  await writeFile(STATE_FILE, JSON.stringify({ portfolio, active, judgments, seen, waits, lastCandle }));
   await writeFile(EVENTS_FILE, JSON.stringify(state.events));
 }
 
@@ -84,28 +89,36 @@ function closeExpired(): void {
 }
 
 // Décision 100 % code sur les bougies clôturées ; Jev n'intervient que via le biais et le veto news
-function decideAll(): void {
+function decideAll(journal = false): void {
   for (const symbol of config.symbols) {
     const closes = state.closes[symbol];
     if (!closes) continue;
     const d = decide({ symbol, closes, judgments: state.judgments, position: state.portfolio.positions[symbol] });
     // La tendance est calculée pour tous les actifs, mais le bot n'agit que sur ceux de la simulation
     state.signals[symbol] = d;
-    if (state.active.includes(symbol)) act(d);
+    if (!state.active.includes(symbol)) continue;
+    act(d);
+    if (journal && d.action === "HOLD") state.waits = [...state.waits, { time: new Date().toISOString(), symbol, price: state.prices[symbol] ?? d.price, reason: d.reason }].slice(-MAX_WAITS);
   }
+  if (journal) emit("waits", state.waits);
 }
 
 async function refreshCandles(): Promise<void> {
   const { interval, window } = config.strategy;
-  await Promise.all(
+  const closed = await Promise.all(
     config.symbols.map(async (symbol) => {
       const candles = await fetchCandles(symbol, interval, window);
       // La dernière bougie renvoyée est encore en cours : on ne décide que sur des clôtures
       state.closes[symbol] = candles.slice(0, -1).map((c) => c.close);
       state.prices[symbol] ??= candles.at(-1)!.close;
+      const closedAt = candles.at(-2)!.time;
+      if (state.lastCandle[symbol] === closedAt) return false;
+      state.lastCandle[symbol] = closedAt;
+      return true;
     }),
   );
-  decideAll();
+  // Une nouvelle bougie vient de clôturer : la décision de chaque actif est consignée, ordre ou attente
+  decideAll(closed.some(Boolean));
 }
 
 // Jev ne juge que les titres jamais vus : chaque nouveauté met à jour le biais news et ouvre un événement suivi
@@ -117,9 +130,8 @@ async function pollSource(source: Source): Promise<void> {
   // Texte complet récupéré pour les seuls titres nouveaux ; en cas d'échec, Jev juge le titre
   if (source.fetchBody) for (const h of fresh) h.body = await source.fetchBody(h).catch(() => undefined);
   const judged = await judgeHeadlines(fresh);
-  state.judgments = [...judged, ...state.judgments]
-    .sort((a, b) => b.headline.publishedAt.localeCompare(a.headline.publishedAt))
-    .slice(0, MAX_JUDGMENTS);
+  const merged = new Map([...state.judgments, ...judged].map((j) => [headlineKey(j.headline), j]));
+  state.judgments = [...merged.values()].sort((a, b) => b.headline.publishedAt.localeCompare(a.headline.publishedAt)).slice(0, MAX_JUDGMENTS);
 
   const tracked = judged.map((j) => track(j, source.kind, state.prices, config.news.minConfidence)).filter((e) => e !== null);
   state.events = [...state.events, ...tracked].slice(-MAX_EVENTS);
@@ -181,8 +193,9 @@ export async function reset(symbols: string[]): Promise<void> {
   if (!active.length) throw new Error("Choisis au moins un actif.");
   state.active = active;
   state.portfolio = newPortfolio(config.startCash);
+  state.waits = [];
   recordEquity(state.portfolio, state.prices);
-  decideAll();
+  decideAll(true);
   await persist();
   emit("reset", null);
 }
@@ -255,6 +268,7 @@ export function view() {
     startCash: p.startCash,
     history: p.history,
     trades: p.trades,
+    waits: state.waits,
     judgments: state.judgments,
     events: eventsView(),
     live: live(),

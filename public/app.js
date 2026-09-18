@@ -12,7 +12,7 @@ const base = (symbol) => symbol.replace("USDT", "");
 const short = (title) => (title.length > 180 ? `${title.slice(0, 180)}…` : title);
 // Titre + réponses de Jev aux questions propres à la source (décision de taux, escalade commerciale…)
 const titleCell = (j) => el("td", {}, short(j.headline.title), ...(j.details ? [el("small", {}, Object.entries(j.details).map(([k, v]) => `${k} : ${v}`).join(" · "))] : []));
-const ACTIONS = { BUY: "▲ Achat", SELL: "▼ Vente" };
+const ACTIONS = { BUY: "▲ Achat", SELL: "▼ Vente", HOLD: "■ Attente" };
 const TRENDS = { up: "▲ Tendance haussière", down: "▼ Tendance baissière", none: "■ Pas de tendance" };
 const INTERVALS = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14_400, "1d": 86_400 };
 // Volatilité journalière mesurée sur 3 ans de bougies Binance, pour aider à choisir
@@ -162,7 +162,7 @@ function renderSignal(symbol, d, price) {
   const zones = { low: (d.sellBelow / d.ema - 1) / SCALE, high: (d.buyAbove / d.ema - 1) / SCALE };
   const active = state.active.includes(symbol);
   m.panel.classList.toggle("inactive", !active);
-  const detail = `${active ? d.reason : "Actif non retenu pour cette simulation : le bot n'y investit pas"}. Prix ${signed(gap * 100, 1)} % par rapport à l'EMA ${state.config.strategy.emaPeriod} (${nf(d.ema)}), achat au-dessus de ${nf(d.buyAbove)}, vente sous ${nf(d.sellBelow)}. Biais news ${d.news === null ? "–" : signed(d.news)} (${d.headlinesUsed} titres).`;
+  const detail = `${active ? d.reason : "actif non retenu pour cette simulation"} · achat au-dessus de ${nf(d.buyAbove)}, vente sous ${nf(d.sellBelow)} · biais news ${d.news === null ? "–" : signed(d.news)}`;
   m.signal.replaceChildren(gauge(gap / SCALE, zones, `${signed(gap * 100, 1)} %`), el("span", { class: `action ${d.trend === "up" ? "up" : d.trend === "down" ? "down" : ""}` }, TRENDS[d.trend]), el("span", { class: "why" }, detail));
 }
 
@@ -199,20 +199,22 @@ function table(head, rows) {
 }
 
 function renderTrades() {
-  if (!state.trades.length) {
-    $("trades").replaceChildren(el("p", { class: "empty" }, "Aucun ordre pour l'instant : le bot n'achète que lorsqu'une bougie clôture au-dessus du seuil d'achat."));
+  // Ordres et attentes dans un même journal, du plus récent au plus ancien
+  const journal = [...state.trades, ...state.waits.map((w) => ({ ...w, side: "HOLD" }))].sort((a, b) => b.time.localeCompare(a.time)).slice(0, 200);
+  if (!journal.length) {
+    $("trades").replaceChildren(el("p", { class: "empty" }, "Aucune décision pour l'instant : la première arrive à la prochaine clôture de bougie."));
     return;
   }
-  const head = [["Date"], ["Actif"], ["Sens"], ["Prix", "num"], ["Montant", "num"], ["Résultat net", "num"], ["Raison"]];
-  const rows = [...state.trades].reverse().slice(0, 200).map((t) =>
+  const head = [["Date"], ["Actif"], ["Décision"], ["Prix", "num"], ["Montant", "num"], ["Résultat net", "num"], ["Raison"]];
+  const rows = journal.map((t) =>
     el(
       "tr",
       {},
       el("td", { class: "nowrap" }, when(t.time)),
       el("td", {}, base(t.symbol)),
-      el("td", {}, el("span", { class: `action ${t.side === "BUY" ? "up" : "down"}` }, ACTIONS[t.side])),
+      el("td", {}, el("span", { class: `action ${t.side === "BUY" ? "up" : t.side === "SELL" ? "down" : ""}` }, ACTIONS[t.side])),
       el("td", { class: "num" }, nf(t.price)),
-      el("td", { class: "num" }, nf(t.usdt)),
+      el("td", { class: "num" }, t.usdt === undefined ? "" : nf(t.usdt)),
       el("td", { class: `num ${t.pnl === undefined ? "" : t.pnl >= 0 ? "up" : "down"}` }, t.pnl === undefined ? "" : signed(t.pnl)),
       el("td", {}, t.reason),
     ),
@@ -247,18 +249,25 @@ const HORIZON_LABELS = { 5: "+5 min", 15: "+15 min", 60: "+1 h", 240: "+4 h" };
 
 function renderEvents() {
   const { list, scoreboard, sources } = state.events;
-  const rules = state.config.eventRules.map((r) => `« ${r.name} » : achat immédiat de ${nf(r.share * 100, 0)} % du capital, revendu ${r.holdMin / 60} h plus tard`);
-  $("sources").textContent = `Sources sondées : ${sources.map((s) => `${s.name} (${s.kind}, toutes les ${s.everySec} s)`).join(", ")}. Circuit immédiat, sans attendre la clôture d'une bougie : ${rules.join(" ; ")}.`;
+  const names = (kind) => sources.filter((s) => s.kind === kind).map((s) => s.name.replace(/ \(.*/, "")).join(", ");
+  const rules = state.config.eventRules.map((r) => `« ${r.name} » → achat de ${nf(r.share * 100, 0)} %, revendu après ${r.holdMin / 60} h`);
+  $("sources").textContent = `Presse : ${names("presse")}. Sources primaires : ${names("primaire")}. Circuit immédiat : ${rules.join(" ; ")}.`;
 
   if (!list.length) {
-    $("eventStats").textContent = "";
-    $("events").replaceChildren(el("p", { class: "empty" }, "Aucun titre capté en direct pour l'instant. Dès qu'une source publie un titre pertinent, il apparaît ici avec le prix au moment de la détection."));
+    $("eventStats").replaceChildren();
+    $("events").replaceChildren(el("p", { class: "empty" }, "Aucune publication captée à chaud pour l'instant."));
     return;
   }
 
-  const summary = (label, group) =>
-    `${label} : ${Object.entries(HORIZON_LABELS).map(([h, name]) => (group[h].n ? `${name} ${signed(group[h].mean * 100, 3)} % (${group[h].wins}/${group[h].n})` : `${name} en attente`)).join(", ")}.`;
-  $("eventStats").textContent = `${scoreboard.tracked} titres captés en direct depuis le ${when(list.at(-1).seenAt)}, retard médian ${scoreboard.medianLatencySec} s. ${summary("Fort impact selon Jev", scoreboard.groups.fort)} ${summary("Autres", scoreboard.groups.autres)} Entre parenthèses : cas où le prix a suivi Jev.`;
+  // Bilan : rendement moyen dans le sens de Jev, et nombre de cas où le prix l'a suivi
+  const cell = (g) => el("td", { class: "num" }, g.n ? `${signed(g.mean * 100)} % (${g.wins}/${g.n})` : "…");
+  const bilan = Object.entries({ "Fort impact selon Jev": scoreboard.groups.fort, Autres: scoreboard.groups.autres }).map(([label, group]) =>
+    el("tr", {}, el("td", {}, label), ...Object.keys(HORIZON_LABELS).map((h) => cell(group[h]))),
+  );
+  $("eventStats").replaceChildren(
+    el("p", {}, `${scoreboard.tracked} publications captées depuis le ${when(list.at(-1).seenAt)}, retard médian ${scoreboard.medianLatencySec} s. Entre parenthèses : cas où le prix a suivi Jev.`),
+    table([["Bilan"], ...Object.values(HORIZON_LABELS).map((name) => [name, "num"])], bilan),
+  );
 
   const head = [["Vu à"], ["Source"], ["Retard", "num"], ["Titre"], ["Actif"], ["Avis de Jev"], ["Impact", "num"], ...Object.values(HORIZON_LABELS).map((name) => [name, "num"])];
   const rows = list.map((e) => {
@@ -426,6 +435,10 @@ async function init() {
     state.trades.push(trade);
     renderTrades();
     drawMarkers(trade.symbol);
+  });
+  stream.addEventListener("waits", (e) => {
+    state.waits = JSON.parse(e.data);
+    renderTrades();
   });
   stream.addEventListener("news", (e) => {
     state.judgments = JSON.parse(e.data);

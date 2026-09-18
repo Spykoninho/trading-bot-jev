@@ -64,12 +64,7 @@
             <div id="replaySpeed" class="segmented" role="group" aria-label="Vitesse du replay"></div>
           </div>
         </div>
-        <p class="muted">
-          La stratégie agit quelques fois par mois : le replay la fait défiler sur plusieurs années de bougies Binance,
-          avec la même fonction de décision que le direct, frais inclus. La variante « avec Jev » rejoue les titres
-          d'époque des mêmes sources que le direct (presse et sources primaires), retrouvés dans leurs archives : à
-          chaque décision, seuls les titres déjà parus sont visibles.
-        </p>
+        <p class="muted">Même règle que le direct, frais inclus, sur 3 ans de bougies réelles. « Avec Jev » relit les publications de l'époque sans voir le futur.</p>
         <p id="replayLegend" class="legend" hidden>
           <span id="keyJev"><i class="key jev"></i>Stratégie avec Jev</span>
           <span><i class="key plain"></i>Stratégie sans news</span>
@@ -81,29 +76,21 @@
 
       <section class="panel" aria-labelledby="events-title">
         <h2 id="events-title">Test en direct : le prix bouge-t-il après une news ?</h2>
-        <p class="muted">
-          Chaque titre pertinent capté moins de 5 minutes après sa parution est enregistré avec le prix à l'instant
-          où le bot le voit, puis le prix est relevé à +5 min, +15 min, +1 h et +4 h. Les pourcentages sont comptés
-          dans le sens prédit par Jev : positif, il avait raison. Rien n'est recalculé après coup, c'est une mesure en
-          conditions réelles, à lire après quelques semaines.
-        </p>
+        <p class="muted">Chaque publication captée à chaud est enregistrée avec le prix du moment, puis le prix est relevé plus tard. Positif : le prix a suivi Jev.</p>
         <p id="sources" class="muted"></p>
-        <p id="eventStats" role="status"></p>
+        <div id="eventStats" role="status"></div>
         <div id="events" class="scroll"></div>
       </section>
 
       <section class="panel" aria-labelledby="trades-title">
-        <h2 id="trades-title">Ordres du bot en direct</h2>
+        <h2 id="trades-title">Décisions du bot en direct</h2>
+        <p class="muted">À chaque clôture de bougie de 4 h, le bot réévalue chaque actif : il achète, vend ou attend.</p>
         <div id="trades" class="scroll"></div>
       </section>
 
       <section class="panel" aria-labelledby="news-title">
         <h2 id="news-title">Titres jugés par Jev</h2>
-        <p class="muted">
-          Jev lit chaque nouveau titre dès sa parution. Le biais news de chaque actif est la moyenne des sentiments,
-          pondérée par l'impact marché, la confiance du modèle et la fraîcheur du titre. Il décale les seuils de la
-          stratégie, et un risque réglementaire fort bloque tout achat.
-        </p>
+        <p class="muted">Les réponses de Jev à chaque publication. Grisé : ignoré (sans rapport, ou actif peu sûr).</p>
         <div id="news" class="scroll"></div>
       </section>
     </main>

@@ -246,7 +246,7 @@ figcaption {
 /* Décision en direct : jauge divergente −1 vendre, +1 acheter */
 .signal {
   display: grid;
-  grid-template-columns: minmax(140px, 220px) auto 1fr;
+  grid-template-columns: 1fr auto;
   gap: 8px 16px;
   align-items: center;
   padding-top: 12px;
@@ -255,12 +255,14 @@ figcaption {
 }
 
 .signal .why {
+  grid-column: 1 / -1;
   color: var(--ink-2);
 }
 
 .gauge {
   display: grid;
-  grid-template-columns: 1fr 48px;
+  grid-template-columns: 1fr auto;
+  white-space: nowrap;
   gap: 8px;
   align-items: center;
 }
@@ -328,6 +330,7 @@ td {
 
 .num {
   text-align: right;
+  white-space: nowrap;
 }
 
 .nowrap {
@@ -356,14 +359,6 @@ td .gauge {
 @media (max-width: 820px) {
   .portfolio {
     grid-template-columns: 1fr;
-  }
-
-  .signal {
-    grid-template-columns: 1fr auto;
-  }
-
-  .signal .why {
-    grid-column: 1 / -1;
   }
 
   .hero {
