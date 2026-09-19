@@ -10,7 +10,7 @@ const day = (t) => new Date(t).toLocaleDateString("fr-FR");
 const when = (t) => new Date(t).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 // Devise de cotation du bot : tout l'affichage en dépend, plus rien n'est codé en dur
 const quote = () => state?.config?.quote ?? "USDC";
-const base = (symbol) => (symbol.endsWith(quote()) ? symbol.slice(0, -quote().length) : symbol);
+const base = (symbol) => (symbol.endsWith(`-${quote()}`) ? symbol.slice(0, -quote().length - 1) : symbol);
 const short = (title) => (title.length > 180 ? `${title.slice(0, 180)}…` : title);
 // Titre + réponses de Jev aux questions propres à la source (décision de taux, escalade commerciale…)
 const titleCell = (j) => el("td", {}, short(j.headline.title), ...(j.details ? [el("small", {}, Object.entries(j.details).map(([k, v]) => `${k} : ${v}`).join(" · "))] : []));
