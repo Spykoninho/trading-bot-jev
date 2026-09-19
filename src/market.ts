@@ -63,9 +63,16 @@ export function reconnectDelay(attempt: number, random = Math.random): number {
   return Math.round(Math.min(RECONNECT.min * 2 ** attempt, RECONNECT.max) * (0.5 + random() / 2));
 }
 
-type Ticker24h = { event: string; data?: { market: string; last: string }[] };
+type Ticker24h = { event: string; data?: { market: string; last?: string; bid?: string; ask?: string }[] };
 
-// Flux temps réel : le canal ticker24h de Bitvavo pousse le dernier prix de chaque marché une fois par seconde
+// Milieu du carnet plutôt que dernier échange : sur un marché peu traité, `last` peut rester figé plusieurs minutes
+export const tickerPrice = ({ last, bid, ask }: { last?: string; bid?: string; ask?: string }): number | null => {
+  const [b, a] = [Number(bid), Number(ask)];
+  if (b > 0 && a >= b) return (a + b) / 2;
+  return Number(last) > 0 ? Number(last) : null;
+};
+
+// Flux temps réel : le canal ticker24h de Bitvavo pousse le carnet de chaque marché environ une fois par seconde
 export function startPriceFeed(symbols: string[], onPrice: (symbol: string, price: number) => void, onStatus?: (up: boolean, detail: string) => void): void {
   let attempt = 0;
   const connect = () => {
@@ -76,7 +83,10 @@ export function startPriceFeed(symbols: string[], onPrice: (symbol: string, pric
       if (message.event !== "ticker24h") return;
       if (attempt) onStatus?.(true, "flux de prix rétabli");
       attempt = 0; // le flux répond : le backoff repart de zéro
-      for (const { market, last } of message.data ?? []) if (last) onPrice(market, Number(last));
+      for (const tick of message.data ?? []) {
+        const price = tickerPrice(tick);
+        if (price) onPrice(tick.market, price);
+      }
     };
     ws.onerror = () => ws.close();
     ws.onclose = () => {

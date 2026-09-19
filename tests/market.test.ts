@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchCandleAt, fetchCandles, fetchHistory, RECONNECT, reconnectDelay } from "../src/market.js";
+import { fetchCandleAt, fetchCandles, fetchHistory, RECONNECT, reconnectDelay, tickerPrice } from "../src/market.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -66,5 +66,16 @@ describe("reconnectDelay", () => {
     const spread = Array.from({ length: 50 }, () => reconnectDelay(4));
     expect(Math.min(...spread)).toBeGreaterThanOrEqual(8000);
     expect(Math.max(...spread)).toBeLessThanOrEqual(16_000);
+  });
+});
+
+describe("tickerPrice", () => {
+  it("prend le milieu du carnet quand il est disponible", () => {
+    expect(tickerPrice({ last: "81251", bid: "81265", ask: "81285" })).toBe(81275);
+  });
+  it("retombe sur le dernier échange sans carnet exploitable", () => {
+    expect(tickerPrice({ last: "81251" })).toBe(81251);
+    expect(tickerPrice({ last: "81251", bid: "0", ask: "81285" })).toBe(81251);
+    expect(tickerPrice({})).toBeNull();
   });
 });
