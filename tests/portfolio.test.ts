@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buy, close, equity, newPortfolio, recordEquity, stats, totalsFrom } from "../src/portfolio.js";
+import { buy, close, equity, holdValue, newPortfolio, recordEquity, startHold, stats, totalsFrom } from "../src/portfolio.js";
 
 const order = { symbol: "BTC-EUR", price: 50_000, fee: 0.001, reason: "test" };
 
@@ -117,5 +117,30 @@ describe("equity and stats", () => {
     buy(p, { ...order, usdt: 100 });
     close(p, { ...order, price: 55_000 });
     expect(totalsFrom(p.trades)).toEqual(stats(p));
+  });
+});
+
+describe("témoin acheter et garder", () => {
+  it("répartit tout le capital à parts égales, frais payés une fois, puis ne bouge plus", () => {
+    const p = newPortfolio(1000);
+    startHold(p, { "BTC-USDC": 100, "ETH-USDC": 10 }, 0.001);
+    expect(p.hold!["BTC-USDC"]).toBeCloseTo(4.995);
+    expect(p.hold!["ETH-USDC"]).toBeCloseTo(49.95);
+    expect(holdValue(p, { "BTC-USDC": 100, "ETH-USDC": 10 })).toBeCloseTo(999);
+    expect(holdValue(p, { "BTC-USDC": 200, "ETH-USDC": 10 })).toBeCloseTo(1498.5);
+    startHold(p, { "BTC-USDC": 1 }, 0);
+    expect(Object.keys(p.hold!)).toHaveLength(2);
+  });
+
+  it("attend d'avoir un prix pour chaque actif et s'inscrit dans l'historique", () => {
+    const p = newPortfolio(1000);
+    startHold(p, { "BTC-USDC": 100, "ETH-USDC": 0 }, 0);
+    expect(p.hold).toBeUndefined();
+    recordEquity(p, { "BTC-USDC": 100 });
+    expect(p.history[0]!.hold).toBeUndefined();
+    startHold(p, { "BTC-USDC": 100 }, 0);
+    expect(holdValue(p, {})).toBeUndefined();
+    recordEquity(p, { "BTC-USDC": 110 });
+    expect(p.history[1]!.hold).toBeCloseTo(1100);
   });
 });

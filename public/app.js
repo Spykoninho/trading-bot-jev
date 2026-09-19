@@ -62,20 +62,25 @@ const tradeMarker = (t, time) => ({
 
 let state;
 let equitySeries;
+let holdSeries;
 let lastEquityTime = 0;
 const markets = {};
 
-function pushEquity(ms, value) {
+function pushEquity(ms, value, hold) {
   const time = sec(ms);
   if (time <= lastEquityTime) return;
   lastEquityTime = time;
   equitySeries.update({ time, value });
+  if (typeof hold === "number") holdSeries.update({ time, value: hold });
 }
 
 function setupEquity() {
   const up = css("--up");
   const down = css("--down");
-  equitySeries = createChart($("equityChart"), true).addSeries(LW.BaselineSeries, {
+  const chart = createChart($("equityChart"), true);
+  // Témoin : ce que vaudrait le capital de départ acheté une fois puis jamais touché
+  holdSeries = chart.addSeries(LW.LineSeries, { color: css("--plain"), lineWidth: 2, lineStyle: LW.LineStyle.Dashed, priceLineVisible: false, title: "acheter et garder" });
+  equitySeries = chart.addSeries(LW.BaselineSeries, {
     baseValue: { type: "price", price: state.startCash },
     topLineColor: up,
     topFillColor1: `${up}47`,
@@ -90,7 +95,8 @@ function setupEquity() {
 function loadEquity() {
   lastEquityTime = 0;
   equitySeries.setData([]);
-  for (const h of state.history) pushEquity(Date.parse(h.time), h.equity);
+  holdSeries.setData([]);
+  for (const h of state.history) pushEquity(Date.parse(h.time), h.equity, h.hold);
 }
 
 function setupMarket(symbol) {
@@ -470,7 +476,19 @@ function renderLive(live) {
     pushPrice(symbol, price, live.time);
     if (live.signals[symbol]) renderSignal(symbol, live.signals[symbol], price);
   }
-  pushEquity(live.time, live.equity);
+  pushEquity(live.time, live.equity, live.hold);
+  renderVersus(live);
+}
+
+// Le bot face à « acheter une fois et ne plus toucher », depuis le même départ
+function renderVersus(live) {
+  if (typeof live.hold !== "number") return void ($("versus").textContent = "");
+  const gap = live.equity - live.hold;
+  $("versus").replaceChildren(
+    `Acheter et garder : ${nf(live.hold)} ${quote()} (${signed((live.hold / state.startCash - 1) * 100)} %). Le bot fait `,
+    el("strong", { class: gap >= 0 ? "up" : "down" }, `${signed(gap)} ${quote()}`),
+    gap >= 0 ? " de mieux." : " de moins.",
+  );
 }
 
 function table(head, rows) {
@@ -706,7 +724,7 @@ async function init() {
   state = await api("/api/state");
   applyMode();
   setupEquity();
-  $("equityCaption").textContent = `Valeur du portefeuille en ${quote()}, vert au-dessus du capital de départ, rouge en dessous`;
+  $("equityCaption").textContent = `Valeur du portefeuille en ${quote()}, vert au-dessus du capital de départ, rouge en dessous. En pointillés orange : le même capital acheté au départ puis jamais touché.`;
   state.config.symbols.forEach(setupMarket);
 
   segmented($("intervals"), Object.keys(INTERVALS).map((key) => [key === "1d" ? "1D" : key, key]), interval, (key) => {

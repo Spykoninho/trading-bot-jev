@@ -7,7 +7,7 @@ import { loadArchive } from "./history.js";
 import { fetchCandleAt, fetchCandles, fetchHistory, startPriceFeed } from "./market.js";
 import { dueReadings, matchRule, scoreboard, track, type TrackedEvent } from "./events.js";
 import { SOURCES, headlineKey, type Source } from "./news.js";
-import { buy, close, equity, MIN_NOTIONAL, newPortfolio, recordEquity, stats, totalsFrom, type Position, type Trade } from "./portfolio.js";
+import { buy, close, equity, holdValue, MIN_NOTIONAL, newPortfolio, recordEquity, startHold, stats, totalsFrom, type Position, type Trade } from "./portfolio.js";
 import { baseOf, decide, type Decision } from "./strategy.js";
 
 const STATE_FILE = "data/state.json";
@@ -359,7 +359,7 @@ export async function start(): Promise<void> {
     (up, detail) => alert(up ? "info" : "warn", detail),
   );
   setInterval(() => emit("tick", live()), 1000);
-  setInterval(() => recordEquity(state.portfolio, state.prices), 60_000);
+  setInterval(trackEquity, 60_000);
   setInterval(() => safely(persist), 15_000);
   setInterval(() => safely(refreshCandles), config.candlesEverySec * 1000);
   setInterval(() => safely(fillReadings), 60_000);
@@ -374,6 +374,23 @@ export async function start(): Promise<void> {
   await safely(fillReadings);
 }
 
+// Prix d'entrée du témoin : le premier achat réel du bot s'il existe (même instant, même prix), sinon le prix courant avec glissement
+function ensureHold(): void {
+  if (state.portfolio.hold) return;
+  const fills = Object.fromEntries(
+    state.active.map((symbol) => {
+      const first = state.portfolio.trades.find((trade) => trade.side === "BUY" && trade.symbol === symbol);
+      return [symbol, first?.price ?? (state.prices[symbol] ?? 0) * (1 + config.slippageBps / 10_000)];
+    }),
+  );
+  startHold(state.portfolio, fills, config.fee);
+}
+
+function trackEquity(): void {
+  ensureHold();
+  recordEquity(state.portfolio, state.prices);
+}
+
 // Nouvelle simulation : l'utilisateur choisit les actifs, le bot s'aligne aussitôt sur leur tendance
 export async function reset(symbols: string[]): Promise<void> {
   const active = config.symbols.filter((s) => symbols.includes(s));
@@ -383,8 +400,8 @@ export async function reset(symbols: string[]): Promise<void> {
   state.active = active;
   state.portfolio = newPortfolio(config.startCash);
   state.waits = [];
-  recordEquity(state.portfolio, state.prices);
   decideAll(true);
+  trackEquity();
   await persist();
   emit("reset", null);
 }
@@ -439,6 +456,7 @@ function live() {
     unavailable: state.unavailable,
     desynced: state.desynced,
     equity: total,
+    hold: holdValue(portfolio, state.prices) ?? null,
     pnl: total - portfolio.startCash,
     cash: portfolio.cash,
     positions: Object.entries(portfolio.positions).map(([key, pos]) => {

@@ -16,7 +16,7 @@ export type Trade = {
   exchangeQty?: number;
 };
 
-type EquityPoint = { time: string; equity: number };
+type EquityPoint = { time: string; equity: number; hold?: number };
 
 // Cumuls tenus à part : le journal des ordres est tronqué, le bilan ne doit pas l'être
 export type Totals = { closed: number; wins: number; realized: number; fees: number };
@@ -30,6 +30,8 @@ export type Portfolio = {
   trades: Trade[];
   history: EquityPoint[];
   totals: Totals;
+  // Témoin « acheter et garder » : quantités figées au départ, jamais retouchées ensuite
+  hold?: Record<string, number>;
 };
 
 export const MIN_NOTIONAL = 10;
@@ -96,8 +98,24 @@ export function close(portfolio: Portfolio, order: Order, now = new Date()): Tra
   return record(portfolio, { time: now.toISOString(), symbol: order.symbol, side: "SELL", qty: pos.qty, price, usdt: gross, fee, reason: order.reason, pnl: gross - fee - pos.cost, exchangeQty: pos.exchangeQty });
 }
 
+// Fige le témoin : tout le capital de départ réparti à parts égales, un seul achat, frais payés une fois
+export function startHold(portfolio: Portfolio, fills: Record<string, number>, fee: number): void {
+  const symbols = Object.keys(fills);
+  if (portfolio.hold || !symbols.length || symbols.some((symbol) => !(fills[symbol]! > 0))) return;
+  const share = portfolio.startCash / symbols.length;
+  portfolio.hold = Object.fromEntries(symbols.map((symbol) => [symbol, (share * (1 - fee)) / fills[symbol]!]));
+}
+
+export function holdValue(portfolio: Portfolio, prices: Record<string, number>): number | undefined {
+  if (!portfolio.hold) return undefined;
+  const entries = Object.entries(portfolio.hold);
+  if (entries.some(([symbol]) => !prices[symbol])) return undefined;
+  return entries.reduce((sum, [symbol, qty]) => sum + qty * prices[symbol]!, 0);
+}
+
 export function recordEquity(portfolio: Portfolio, prices: Record<string, number>, now = new Date()): void {
-  portfolio.history.push({ time: now.toISOString(), equity: equity(portfolio, prices) });
+  const hold = holdValue(portfolio, prices);
+  portfolio.history.push({ time: now.toISOString(), equity: equity(portfolio, prices), ...(hold === undefined ? {} : { hold }) });
   if (portfolio.history.length > MAX_HISTORY) portfolio.history.shift();
 }
 
