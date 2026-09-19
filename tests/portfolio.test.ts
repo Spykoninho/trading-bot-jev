@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buy, close, equity, newPortfolio, recordEquity, stats } from "../src/portfolio.js";
+import { buy, close, equity, newPortfolio, recordEquity, stats, totalsFrom } from "../src/portfolio.js";
 
-const order = { symbol: "BTCUSDT", price: 50_000, fee: 0.001, reason: "test" };
+const order = { symbol: "BTC-EUR", price: 50_000, fee: 0.001, reason: "test" };
 
 describe("buy", () => {
   it("spends cash, charges the fee and opens a position with its entry price", () => {
@@ -9,8 +9,8 @@ describe("buy", () => {
     const trade = buy(p, { ...order, usdt: 100 });
     expect(p.cash).toBe(900);
     expect(trade?.fee).toBeCloseTo(0.1);
-    expect(p.positions.BTCUSDT).toMatchObject({ entryPrice: 50_000, cost: 100 });
-    expect(p.positions.BTCUSDT?.qty).toBeCloseTo(99.9 / 50_000);
+    expect(p.positions["BTC-EUR"]).toMatchObject({ entryPrice: 50_000, cost: 100 });
+    expect(p.positions["BTC-EUR"]?.qty).toBeCloseTo(99.9 / 50_000);
   });
 
   it("never spends more than the cash, and refuses tiny or duplicate orders", () => {
@@ -18,6 +18,27 @@ describe("buy", () => {
     expect(buy(p, { ...order, usdt: 100 })?.usdt).toBe(50);
     expect(buy(p, { ...order, usdt: 100 })).toBeNull();
     expect(buy(newPortfolio(1000), { ...order, usdt: 5 })).toBeNull();
+  });
+
+  it("keeps the event reserve untouched: a trend buy never eats into the floor", () => {
+    const p = newPortfolio(1000);
+    // 100 de réserve : l'achat est rogné à 900 même s'il en demande plus
+    expect(buy(p, { ...order, usdt: 1000, floor: 100 })?.usdt).toBe(900);
+    expect(p.cash).toBe(100);
+    // Le reste de la réserve est hors d'atteinte d'un second achat de tendance
+    expect(buy(p, { ...order, symbol: "ETH-EUR", usdt: 500, floor: 100 })).toBeNull();
+    // La poche événementielle, elle, y puise sans plancher
+    expect(buy(p, { ...order, symbol: "ETH-EUR", book: "event", usdt: 100 })?.usdt).toBe(100);
+  });
+
+  it("fills a market order slightly above the quoted price, and a sale slightly below", () => {
+    const p = newPortfolio(1000);
+    const bought = buy(p, { ...order, usdt: 100, slippageBps: 50 });
+    expect(bought?.price).toBeCloseTo(50_250);
+    expect(p.positions["BTC-EUR"]?.entryPrice).toBeCloseTo(50_250);
+    const sold = close(p, { ...order, slippageBps: 50 });
+    expect(sold?.price).toBeCloseTo(49_750);
+    expect(sold!.pnl!).toBeLessThan(0);
   });
 });
 
@@ -29,14 +50,14 @@ describe("close", () => {
     const gross = (99.9 / 50_000) * 55_000;
     expect(trade?.usdt).toBeCloseTo(gross);
     expect(trade?.pnl).toBeCloseTo(gross * 0.999 - 100);
-    expect(p.positions.BTCUSDT).toBeUndefined();
+    expect(p.positions["BTC-EUR"]).toBeUndefined();
     expect(p.cash).toBeCloseTo(900 + gross * 0.999);
   });
 
   it("hands the quantity really held on the exchange over to the closing trade", () => {
     const p = newPortfolio(1000);
     buy(p, { ...order, usdt: 100 });
-    p.positions.BTCUSDT!.exchangeQty = 0.00199;
+    p.positions["BTC-EUR"]!.exchangeQty = 0.00199;
     expect(close(p, order)?.exchangeQty).toBe(0.00199);
   });
 
@@ -51,12 +72,12 @@ describe("event book", () => {
     buy(p, { ...order, usdt: 400 });
     const event = buy(p, { ...order, usdt: 100, book: "event", exitAt: "2026-01-01T16:00:00.000Z" });
     expect(event?.usdt).toBe(100);
-    expect(Object.keys(p.positions)).toEqual(["BTCUSDT", "event:BTCUSDT"]);
-    expect(p.positions["event:BTCUSDT"]).toMatchObject({ symbol: "BTCUSDT", exitAt: "2026-01-01T16:00:00.000Z" });
-    expect(equity(p, { BTCUSDT: 50_000 })).toBeCloseTo(1000 - 0.5);
+    expect(Object.keys(p.positions)).toEqual(["BTC-EUR", "event:BTC-EUR"]);
+    expect(p.positions["event:BTC-EUR"]).toMatchObject({ symbol: "BTC-EUR", exitAt: "2026-01-01T16:00:00.000Z" });
+    expect(equity(p, { "BTC-EUR": 50_000 })).toBeCloseTo(1000 - 0.5);
 
     close(p, { ...order, book: "event" });
-    expect(Object.keys(p.positions)).toEqual(["BTCUSDT"]);
+    expect(Object.keys(p.positions)).toEqual(["BTC-EUR"]);
   });
 });
 
@@ -64,8 +85,8 @@ describe("equity and stats", () => {
   it("values positions at current prices and records history", () => {
     const p = newPortfolio(1000);
     buy(p, { ...order, usdt: 100, fee: 0 });
-    expect(equity(p, { BTCUSDT: 60_000 })).toBeCloseTo(1020);
-    recordEquity(p, { BTCUSDT: 60_000 });
+    expect(equity(p, { "BTC-EUR": 60_000 })).toBeCloseTo(1020);
+    recordEquity(p, { "BTC-EUR": 60_000 });
     expect(p.history.at(-1)?.equity).toBeCloseTo(1020);
   });
 
@@ -79,5 +100,22 @@ describe("equity and stats", () => {
     expect(s).toMatchObject({ closed: 2, wins: 1 });
     expect(s.fees).toBeGreaterThan(0.39);
     expect(s.realized).toBeCloseTo(p.cash - 1000);
+  });
+
+  it("keeps counting after the trade journal has been truncated", () => {
+    const p = newPortfolio(1000);
+    buy(p, { ...order, usdt: 100 });
+    const realized = close(p, { ...order, price: 55_000 })!.pnl!;
+    // Journal vidé comme le fait la troncature : le bilan ne bouge pas
+    p.trades.length = 0;
+    expect(stats(p)).toMatchObject({ closed: 1, wins: 1 });
+    expect(stats(p).realized).toBeCloseTo(realized);
+  });
+
+  it("rebuilds the totals of a portfolio saved before they existed", () => {
+    const p = newPortfolio(1000);
+    buy(p, { ...order, usdt: 100 });
+    close(p, { ...order, price: 55_000 });
+    expect(totalsFrom(p.trades)).toEqual(stats(p));
   });
 });
