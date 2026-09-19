@@ -1,0 +1,19 @@
+# Déploiement sur un serveur : docker compose up -d --build (voir docs/deploiement.md)
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    # Même utilisateur que le propriétaire du dossier data/ sur le serveur (id -u / id -g)
+    user: "${BOT_UID:-1000}:${BOT_GID:-1000}"
+    env_file: .env
+    # BOT_FLAGS dans .env : vide = papier, "--real" = ordres réels
+    command: sh -c "exec node_modules/.bin/tsx src/index.ts ${BOT_FLAGS:-}"
+    # Jamais exposé sur Internet : le tableau de bord n'a pas d'authentification (tunnel SSH)
+    ports:
+      - "127.0.0.1:3210:3210"
+    volumes:
+      - ./data:/app/data
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
