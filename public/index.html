@@ -15,7 +15,25 @@
         <h1>trading-bot-jev</h1>
         <p id="feed" class="feed"></p>
       </div>
-      <button id="reset">Nouvelle simulation</button>
+      <div class="header-actions">
+        <div class="notif-wrap">
+          <button id="notifBtn" type="button" class="icon-button" aria-haspopup="true" aria-expanded="false" aria-controls="notifPanel" aria-label="Notifications">
+            <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 8a5 5 0 0 1 10 0c0 4 1.5 5.5 1.5 5.5h-13S5 12 5 8Z" />
+              <path d="M8.2 16a1.8 1.8 0 0 0 3.6 0" />
+            </svg>
+            <span id="notifBadge" class="badge" hidden>0</span>
+          </button>
+          <div id="notifPanel" class="notif-panel" hidden role="dialog" aria-label="Centre de notifications">
+            <div class="notif-panel-head">
+              <h2>Notifications</h2>
+              <button id="notifMarkAll" type="button" class="link-button">Tout marquer comme lu</button>
+            </div>
+            <div id="notifList" class="notif-list"></div>
+          </div>
+        </div>
+        <button id="reset">Nouvelle simulation</button>
+      </div>
     </header>
 
     <dialog id="setup" aria-labelledby="setup-title">
@@ -34,6 +52,7 @@
       </form>
     </dialog>
     <p id="status" role="status" class="status" hidden></p>
+    <p id="alert" role="alert" class="status alert" hidden></p>
 
     <main>
       <section class="portfolio panel" aria-labelledby="portfolio-title">
@@ -45,7 +64,7 @@
           <p id="stats" class="muted"></p>
         </div>
         <figure>
-          <figcaption>Valeur du portefeuille en USDT, vert au-dessus du capital de départ, rouge en dessous</figcaption>
+          <figcaption id="equityCaption">Valeur du portefeuille, vert au-dessus du capital de départ, rouge en dessous</figcaption>
           <div id="equityChart" class="chart"></div>
         </figure>
       </section>
@@ -94,6 +113,8 @@
         <div id="news" class="scroll"></div>
       </section>
     </main>
+
+    <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
 
     <script src="vendor/charts.js"></script>
     <script type="module" src="app.js"></script>

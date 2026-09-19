@@ -8,14 +8,16 @@ const signed = (n, d = 2) => `${n >= 0 ? "+" : "−"}${nf(Math.abs(n), d)}`;
 const clock = (t) => new Date(t).toLocaleTimeString("fr-FR");
 const day = (t) => new Date(t).toLocaleDateString("fr-FR");
 const when = (t) => new Date(t).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-const base = (symbol) => symbol.replace("USDT", "");
+// Devise de cotation du bot : tout l'affichage en dépend, plus rien n'est codé en dur
+const quote = () => state?.config?.quote ?? "USDC";
+const base = (symbol) => (symbol.endsWith(quote()) ? symbol.slice(0, -quote().length) : symbol);
 const short = (title) => (title.length > 180 ? `${title.slice(0, 180)}…` : title);
 // Titre + réponses de Jev aux questions propres à la source (décision de taux, escalade commerciale…)
 const titleCell = (j) => el("td", {}, short(j.headline.title), ...(j.details ? [el("small", {}, Object.entries(j.details).map(([k, v]) => `${k} : ${v}`).join(" · "))] : []));
 const ACTIONS = { BUY: "▲ Achat", SELL: "▼ Vente", HOLD: "■ Attente" };
 const TRENDS = { up: "▲ Tendance haussière", down: "▼ Tendance baissière", none: "■ Pas de tendance" };
 const INTERVALS = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14_400, "1d": 86_400 };
-// Volatilité journalière mesurée sur 3 ans de bougies Binance, pour aider à choisir
+// Volatilité journalière mesurée sur 3 ans de bougies, pour aider à choisir
 const ASSET_NOTES = { BTC: "Bitcoin, le moins volatil des trois (≈ 2,3 % par jour)", ETH: "Ethereum, volatilité intermédiaire (≈ 3,2 % par jour)", SOL: "Solana, presque deux fois plus volatil que le Bitcoin (≈ 4,1 % par jour) : gains et pertes amplifiés" };
 
 // Les titres RSS sont des données non fiables : tout passe par des nœuds texte, jamais innerHTML
@@ -95,7 +97,7 @@ function setupMarket(symbol) {
   const price = el("strong", {}, "–");
   const chartBox = el("div", { class: "chart" });
   const signal = el("div", { class: "signal" });
-  const panel = el("section", { class: "panel", "aria-label": `Cours ${base(symbol)}` }, el("div", { class: "market-head" }, el("h2", {}, `${base(symbol)} / USDT`), price), chartBox, signal);
+  const panel = el("section", { class: "panel", "aria-label": `Cours ${base(symbol)}` }, el("div", { class: "market-head" }, el("h2", {}, `${base(symbol)} / ${quote()}`), price), chartBox, signal);
   $("markets").append(panel);
 
   const chart = createChart(chartBox, false);
@@ -166,24 +168,300 @@ function renderSignal(symbol, d, price) {
   m.signal.replaceChildren(gauge(gap / SCALE, zones, `${signed(gap * 100, 1)} %`), el("span", { class: `action ${d.trend === "up" ? "up" : d.trend === "down" ? "down" : ""}` }, TRENDS[d.trend]), el("span", { class: "why" }, detail));
 }
 
+// Bandeau rouge : désynchronisation avec l'exchange, ou actif dont les bougies ne se chargent plus
+function renderAlerts(live) {
+  const down = Object.entries(live.unavailable ?? {}).map(([symbol, why]) => `${base(symbol)} indisponible : ${why}`);
+  const lines = [live.desynced ? `Portefeuille papier et compte Bitvavo ne correspondent plus : ${live.desynced}. Vérifie tes positions sur Bitvavo avant de continuer.` : "", ...down].filter(Boolean);
+  $("alert").hidden = !lines.length;
+  $("alert").textContent = lines.join(" · ");
+}
+
+// ---------- Notifications (cloche, panneau, toasts) ----------
+// Contrat : live.alerts / state.alerts = { id, time, level: "error"|"warn"|"info", message }[], id croissant.
+// Le champ peut être absent ou vide tant que l'autre agent ne l'a pas encore branché côté serveur.
+
+const ALERT_LEVELS = { error: { label: "Erreur" }, warn: { label: "Avertissement" }, info: { label: "Info" } };
+const TOAST_TTL_MS = 8000;
+const MAX_TOASTS = 4;
+const RECENT_ERROR_MS = 10 * 60 * 1000;
+const LAST_SEEN_KEY = "jev-notif-last-seen-id";
+const REDUCE_MOTION = matchMedia("(prefers-reduced-motion: reduce)");
+
+function loadLastSeenId() {
+  try {
+    return Number(localStorage.getItem(LAST_SEEN_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+function saveLastSeenId(id) {
+  try {
+    localStorage.setItem(LAST_SEEN_KEY, String(id));
+  } catch {}
+}
+
+const notif = { alerts: [], lastSeenId: loadLastSeenId(), highWaterId: 0, panelOpen: false };
+let alertsBootstrapped = false;
+let connectionLost = false;
+const toastMap = new Map();
+const toastTimers = new Map();
+
+const levelOf = (a) => (ALERT_LEVELS[a.level] ? a.level : "info");
+
+function relTime(ms) {
+  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  if (s < 10) return "à l'instant";
+  if (s < 60) return `il y a ${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `il y a ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `il y a ${h} h`;
+  return `il y a ${Math.floor(h / 24)} j`;
+}
+
+// Icônes statiques, aucune donnée externe n'y transite (le message, lui, reste toujours en textContent)
+const ICON_PATHS = {
+  error: '<circle cx="8" cy="8" r="6.3"/><line x1="8" y1="4.6" x2="8" y2="8.6"/><circle cx="8" cy="11.2" r="0.7" fill="currentColor" stroke="none"/>',
+  warn: '<path d="M8 2.2 14.3 13.4H1.7Z"/><line x1="8" y1="6.2" x2="8" y2="9.6"/><circle cx="8" cy="11.6" r="0.7" fill="currentColor" stroke="none"/>',
+  info: '<circle cx="8" cy="8" r="6.3"/><line x1="8" y1="7.2" x2="8" y2="11.4"/><circle cx="8" cy="4.9" r="0.7" fill="currentColor" stroke="none"/>',
+};
+function icon(level) {
+  const span = el("span", { class: `notif-icon notif-${level}`, "aria-hidden": "true" });
+  span.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[level] ?? ICON_PATHS.info}</svg>`;
+  return span;
+}
+
+function ingestAlerts(list) {
+  const map = new Map(notif.alerts.map((a) => [a.id, a]));
+  for (const a of list) if (a && typeof a.id === "number" && typeof a.message === "string") map.set(a.id, a);
+  notif.alerts = [...map.values()].sort((a, b) => a.id - b.id).slice(-300);
+}
+
+// Point d'entrée unique pour toute source d'alertes (état initial, tick, flux dédié) : tolère un champ absent
+function syncAlerts(list) {
+  const bootstrap = !alertsBootstrapped;
+  alertsBootstrapped = true;
+  if (Array.isArray(list) && list.length) ingestAlerts(list);
+  const maxId = notif.alerts.at(-1)?.id ?? 0;
+
+  if (bootstrap) {
+    // Premier chargement : pas de rejeu de l'historique en toasts, sauf les erreurs encore fraîches (< 10 min)
+    const now = Date.now();
+    for (const a of notif.alerts.filter((a) => a.level === "error" && now - a.time < RECENT_ERROR_MS)) pushToast({ id: a.id, level: "error", time: a.time, message: a.message });
+    notif.highWaterId = maxId;
+    notif.lastSeenId = Math.max(notif.lastSeenId, maxId);
+    saveLastSeenId(notif.lastSeenId);
+  } else {
+    const fresh = notif.alerts.filter((a) => a.id > notif.highWaterId);
+    if (fresh.length) {
+      notif.highWaterId = fresh.at(-1).id;
+      for (const a of fresh) pushToast({ id: a.id, level: levelOf(a), time: a.time, message: a.message });
+    }
+  }
+  updateBadge();
+  if (notif.panelOpen) renderNotifPanel();
+}
+
+function updateBadge() {
+  const unread = notif.alerts.filter((a) => a.id > notif.lastSeenId).length;
+  $("notifBadge").hidden = unread === 0;
+  $("notifBadge").textContent = unread > 99 ? "99+" : String(unread);
+  $("notifBtn").setAttribute("aria-label", unread ? `Notifications, ${unread} non lue${unread > 1 ? "s" : ""}` : "Notifications");
+}
+
+function renderNotifPanel() {
+  const list = [...notif.alerts].reverse();
+  if (!list.length) {
+    $("notifList").replaceChildren(el("p", { class: "empty-panel" }, "Aucune alerte pour l'instant."));
+    return;
+  }
+  $("notifList").replaceChildren(
+    ...list.map((a) => {
+      const lvl = levelOf(a);
+      return el(
+        "div",
+        { class: `notif-item notif-${lvl}${a.id > notif.lastSeenId ? " unread" : ""}` },
+        icon(lvl),
+        el(
+          "div",
+          { class: "notif-item-body" },
+          el("div", { class: "notif-item-head" }, el("span", { class: "notif-level" }, ALERT_LEVELS[lvl].label), el("time", { title: when(a.time) }, relTime(a.time))),
+          el("p", {}, a.message),
+        ),
+      );
+    }),
+  );
+}
+
+function markAllRead() {
+  notif.lastSeenId = Math.max(notif.lastSeenId, notif.highWaterId, notif.alerts.at(-1)?.id ?? 0);
+  saveLastSeenId(notif.lastSeenId);
+  updateBadge();
+  renderNotifPanel();
+}
+
+function openNotifPanel() {
+  notif.panelOpen = true;
+  $("notifPanel").hidden = false;
+  $("notifBtn").setAttribute("aria-expanded", "true");
+  renderNotifPanel();
+  document.addEventListener("keydown", onNotifKeydown);
+  document.addEventListener("click", onNotifOutsideClick, true);
+}
+function closeNotifPanel(returnFocus = true) {
+  if (!notif.panelOpen) return;
+  notif.panelOpen = false;
+  $("notifPanel").hidden = true;
+  $("notifBtn").setAttribute("aria-expanded", "false");
+  document.removeEventListener("keydown", onNotifKeydown);
+  document.removeEventListener("click", onNotifOutsideClick, true);
+  if (returnFocus) $("notifBtn").focus();
+}
+function onNotifKeydown(event) {
+  if (event.key === "Escape") {
+    event.stopPropagation();
+    closeNotifPanel();
+  }
+}
+function onNotifOutsideClick(event) {
+  if (!$("notifPanel").contains(event.target) && !$("notifBtn").contains(event.target)) closeNotifPanel(false);
+}
+
+// ---------- Toasts ----------
+
+function buildToastNode({ id, level, time, message, protectedToast }) {
+  const lvl = ALERT_LEVELS[level] ? level : "info";
+  const closeBtn = el("button", { type: "button", class: "toast-close", "aria-label": "Fermer la notification" }, "×");
+  const node = el(
+    "div",
+    { class: `toast toast-${lvl}`, role: lvl === "error" ? "alert" : "status", "data-level": lvl },
+    icon(lvl),
+    el("div", { class: "toast-body" }, el("div", { class: "toast-head" }, el("span", { class: "toast-level" }, ALERT_LEVELS[lvl].label), el("time", {}, clock(time))), el("p", { class: "toast-message" }, message)),
+    closeBtn,
+  );
+  node._toastId = id;
+  if (protectedToast) node.dataset.protected = "true";
+  closeBtn.addEventListener("click", () => dismissToast(id));
+  if (lvl !== "error") {
+    node.addEventListener("mouseenter", () => pauseToastTimer(id));
+    node.addEventListener("mouseleave", () => resumeToastTimer(id));
+    node.addEventListener("focusin", () => pauseToastTimer(id));
+    node.addEventListener("focusout", () => resumeToastTimer(id));
+  }
+  return node;
+}
+
+// info/warn se referment seuls après ~8 s (pause au survol/focus) ; error reste jusqu'à fermeture manuelle
+function pushToast({ id, level, time, message }, { protectedToast = false } = {}) {
+  if (toastMap.has(id)) return;
+  const node = buildToastNode({ id, level, time, message, protectedToast });
+  toastMap.set(id, node);
+  $("toasts").append(node);
+  if (level !== "error") startToastTimer(id);
+  trimToasts();
+  refreshToastsLiveness();
+}
+
+function dismissToast(id) {
+  const node = toastMap.get(id);
+  if (!node) return;
+  toastMap.delete(id);
+  stopToastTimer(id);
+  collapseAndRemove(node);
+  refreshToastsLiveness();
+}
+
+// Maximum 4 toasts visibles : les plus anciens se replient (le toast de connexion persistant y échappe)
+function trimToasts() {
+  const container = $("toasts");
+  let extra = container.children.length - MAX_TOASTS;
+  for (const node of [...container.children]) {
+    if (extra <= 0) break;
+    if (node.dataset.protected === "true" || node.classList.contains("toast-leaving")) continue;
+    dismissToast(node._toastId);
+    extra--;
+  }
+}
+
+function collapseAndRemove(node) {
+  if (REDUCE_MOTION.matches) return node.remove();
+  node.classList.add("toast-leaving");
+  const remove = () => node.remove();
+  node.addEventListener("transitionend", remove, { once: true });
+  setTimeout(remove, 400);
+}
+
+function refreshToastsLiveness() {
+  const hasError = [...$("toasts").children].some((n) => n.dataset.level === "error" && !n.classList.contains("toast-leaving"));
+  $("toasts").setAttribute("aria-live", hasError ? "assertive" : "polite");
+}
+
+function startToastTimer(id) {
+  toastTimers.set(id, { remaining: TOAST_TTL_MS, start: Date.now(), timeoutId: null });
+  scheduleToastTimeout(id);
+}
+function scheduleToastTimeout(id) {
+  const t = toastTimers.get(id);
+  if (!t) return;
+  t.start = Date.now();
+  t.timeoutId = setTimeout(() => dismissToast(id), t.remaining);
+}
+function pauseToastTimer(id) {
+  const t = toastTimers.get(id);
+  if (!t || t.timeoutId === null) return;
+  clearTimeout(t.timeoutId);
+  t.remaining -= Date.now() - t.start;
+  t.timeoutId = null;
+}
+function resumeToastTimer(id) {
+  const t = toastTimers.get(id);
+  if (!t || t.timeoutId !== null || t.remaining <= 0) return;
+  scheduleToastTimeout(id);
+}
+function stopToastTimer(id) {
+  const t = toastTimers.get(id);
+  if (t) clearTimeout(t.timeoutId);
+  toastTimers.delete(id);
+}
+
+// Connexion perdue/rétablie : toast d'erreur persistant unique, remplacé par un toast info au retour
+function markConnectionLost() {
+  if (connectionLost) return;
+  connectionLost = true;
+  dismissToast("connection-restored");
+  pushToast({ id: "connection-lost", level: "error", time: Date.now(), message: "Connexion au bot perdue" }, { protectedToast: true });
+}
+function markConnectionRestored() {
+  if (!connectionLost) return;
+  connectionLost = false;
+  dismissToast("connection-lost");
+  pushToast({ id: "connection-restored", level: "info", time: Date.now(), message: "Connexion rétablie" });
+}
+
+$("notifBtn").addEventListener("click", () => (notif.panelOpen ? closeNotifPanel() : openNotifPanel()));
+$("notifMarkAll").addEventListener("click", markAllRead);
+updateBadge();
+
 function renderLive(live) {
   $("feed").className = `feed${live.feedOk ? " ok" : ""}`;
-  const mode = { paper: "Portefeuille papier", testnet: "Ordres répliqués sur le testnet Binance", real: "ORDRES RÉELS sur Binance" }[state.config.mode];
+  const mode = { paper: "Portefeuille papier", real: "ORDRES RÉELS sur Bitvavo" }[state.config.mode];
   $("feed").textContent = live.feedOk ? `${mode}. Prix en direct, ${clock(live.time)}.` : "Flux de prix interrompu, reconnexion…";
+  renderAlerts(live);
+  syncAlerts(live.alerts);
 
-  $("equity").replaceChildren(nf(live.equity), el("small", {}, " USDT"));
+  $("equity").replaceChildren(nf(live.equity), el("small", {}, ` ${quote()}`));
   $("pnl").className = `delta ${live.pnl >= 0 ? "up" : "down"}`;
-  $("pnl").textContent = `${live.pnl >= 0 ? "▲" : "▼"} ${signed(live.pnl)} USDT (${signed((live.pnl / state.startCash) * 100)} %) depuis le ${when(state.startedAt)}`;
+  $("pnl").textContent = `${live.pnl >= 0 ? "▲" : "▼"} ${signed(live.pnl)} ${quote()} (${signed((live.pnl / state.startCash) * 100)} %) depuis le ${when(state.startedAt)}`;
 
-  const rows = [["Cash", `${nf(live.cash)} USDT`, ""]];
-  for (const p of live.positions) rows.push([`${base(p.symbol)}${p.event ? " (événement)" : ""}`, `${nf(p.value)} USDT`, `entrée ${nf(p.entryPrice)}, ${signed(p.gain * 100)} %${p.exitAt ? `, sortie à ${clock(p.exitAt)}` : ""}`]);
+  const rows = [["Cash", `${nf(live.cash)} ${quote()}`, ""]];
+  for (const p of live.positions) rows.push([`${base(p.symbol)}${p.event ? " (événement)" : ""}`, `${nf(p.value)} ${quote()}`, `entrée ${nf(p.entryPrice)}, ${signed(p.gain * 100)} %${p.exitAt ? `, sortie à ${clock(p.exitAt)}` : ""}`]);
   if (!live.positions.length) rows.push(["Positions", "Aucune", ""]);
   $("holdings").replaceChildren(...rows.flatMap(([k, v, sub]) => [el("dt", {}, k), el("dd", {}, v, ...(sub ? [el("small", {}, sub)] : []))]));
 
   const s = live.stats;
   $("stats").textContent = s.closed
-    ? `${s.closed} aller-retour(s) terminé(s), ${nf((s.wins / s.closed) * 100, 0)} % gagnants, ${signed(s.realized)} USDT réalisés, ${nf(s.fees)} USDT de frais.`
-    : `${nf(s.fees)} USDT de frais payés, aucun aller-retour terminé pour l'instant.`;
+    ? `${s.closed} aller-retour(s) terminé(s), ${nf((s.wins / s.closed) * 100, 0)} % gagnants, ${signed(s.realized)} ${quote()} réalisés, ${nf(s.fees)} ${quote()} de frais.`
+    : `${nf(s.fees)} ${quote()} de frais payés, aucun aller-retour terminé pour l'instant.`;
 
   for (const symbol of state.config.symbols) {
     const price = live.prices[symbol];
@@ -252,7 +530,7 @@ function renderEvents() {
   const { list, scoreboard, sources } = state.events;
   const names = (kind) => sources.filter((s) => s.kind === kind).map((s) => s.name.replace(/ \(.*/, "")).join(", ");
   const rules = state.config.eventRules.map((r) => `« ${r.name} » → achat de ${nf(r.share * 100, 0)} %, revendu après ${r.holdMin / 60} h`);
-  $("sources").textContent = `Presse : ${names("presse")}. Sources primaires : ${names("primaire")}. Circuit immédiat : ${rules.join(" ; ")}.`;
+  $("sources").textContent = `Presse : ${names("presse")}. Sources primaires : ${names("primaire")}. Circuit immédiat : ${rules.join(" ; ") || "désactivé"}.`;
 
   if (!list.length) {
     $("eventStats").replaceChildren();
@@ -344,16 +622,20 @@ function replayStep() {
   const pct = (n) => `${signed(n * 100, 1)} %`;
   if (end < times.length) {
     const live = [jev && `avec Jev ${nf(jev.curve[end - 1])}`, `sans news ${nf(plain.curve[end - 1])}`, `acheter et garder ${nf(hold[end - 1])}`].filter(Boolean).join(", ");
-    $("replayStats").textContent = `${assets}, ${day(now)} : ${live} USDT, ${done.length} ordres.`;
+    $("replayStats").textContent = `${assets}, ${day(now)} : ${live} ${quote()}, ${done.length} ordres.`;
     return;
   }
   clearInterval(replay.timer);
-  const line = (label, s) => `${label} ${pct(s.strategyReturn)} (pire creux −${nf(s.strategyDrawdown * 100, 0)} %, ${s.closed} allers-retours dont ${s.wins} gagnants, ${nf(s.fees)} USDT de frais)`;
+  // Rendement, risque et régularité : le rendement seul ne dit pas à quel prix il a été obtenu
+  const ratios = (c) => `CAGR ${pct(c.cagr)}, Sharpe ${nf(c.sharpe)}, Sortino ${nf(c.sortino)}, MAR ${nf(c.mar)}`;
+  const line = (label, s) => `${label} ${pct(s.strategy.return)} (pire creux −${nf(s.strategy.drawdown * 100, 0)} %, ${ratios(s.strategy)}, ${s.closed} allers-retours dont ${s.wins} gagnants, ${nf(s.fees)} ${quote()} de frais)`;
+  const profile = (p) => `Allers-retours : ${p.count}, ${nf(p.winRate * 100, 0)} % gagnants, médiane ${pct(p.median)}, p10 ${pct(p.p10)}, p90 ${pct(p.p90)}, pire perte ${pct(p.worst)}, les 5 meilleurs font ${nf(p.top5Share * 100, 0)} % du gain cumulé.`;
   const parts = [
     `${assets}, du ${day(times[0])} au ${day(now)}.`,
     jev ? `${line("Avec Jev :", jev.stats)}.` : "",
     `${line("Sans news :", plain.stats)}.`,
-    `Acheter et garder : ${pct(holdStats.return)} (pire creux −${nf(holdStats.drawdown * 100, 0)} %).`,
+    `Acheter et garder : ${pct(holdStats.return)} (pire creux −${nf(holdStats.drawdown * 100, 0)} %, ${ratios(holdStats)}).`,
+    profile((jev ?? plain).stats.profile),
     jev
       ? `Jev a jugé ${nf(news.headlines, 0)} titres d'époque, qui couvrent ${news.daysCovered} jours sur ${news.days} ; les autres jours, les deux variantes décident à l'identique.`
       : "Pas encore de titres d'époque : lance « npm run history » pour comparer avec et sans Jev.",
@@ -369,7 +651,7 @@ function playReplay() {
 
 async function startReplay() {
   if (!replay.data) {
-    $("replayStats").textContent = `Chargement de ${state.config.backtestYears} ans de bougies Binance…`;
+    $("replayStats").textContent = `Chargement de ${state.config.backtestYears} ans de bougies…`;
     replay.data = await api("/api/backtest");
   }
   $("replayChart").hidden = false;
@@ -397,6 +679,7 @@ async function api(path, method = "GET", payload) {
 
 async function load() {
   state = await api("/api/state");
+  syncAlerts(state.alerts);
   // Le replay dépend des actifs choisis : on le recalcule à la prochaine lecture
   clearInterval(replay.timer);
   replay.data = null;
@@ -415,6 +698,7 @@ async function load() {
 async function init() {
   state = await api("/api/state");
   setupEquity();
+  $("equityCaption").textContent = `Valeur du portefeuille en ${quote()}, vert au-dessus du capital de départ, rouge en dessous`;
   state.config.symbols.forEach(setupMarket);
 
   segmented($("intervals"), Object.keys(INTERVALS).map((key) => [key === "1d" ? "1D" : key, key]), interval, (key) => {
@@ -449,17 +733,25 @@ async function init() {
     state.events = JSON.parse(e.data);
     renderEvents();
   });
+  // Canal dédié éventuel, en plus de state.alerts et live.alerts : syncAlerts() dédoublonne par id dans tous les cas
+  stream.addEventListener("alerts", (e) => syncAlerts(JSON.parse(e.data)));
   stream.addEventListener("reset", load);
-  stream.onopen = () => notify("");
-  stream.onerror = () => notify("Connexion au bot perdue. Vérifie que « npm start » tourne ; la page se reconnecte toute seule.");
+  stream.onopen = () => {
+    notify("");
+    markConnectionRestored();
+  };
+  stream.onerror = () => {
+    notify("Connexion au bot perdue. Vérifie que « npm start » tourne ; la page se reconnecte toute seule.");
+    markConnectionLost();
+  };
 
-  // Resynchronise les bougies avec Binance une fois par minute
+  // Resynchronise les bougies avec la plateforme une fois par minute
   setInterval(() => loadCandles().catch(() => {}), 60_000);
 }
 
 // Nouvelle simulation : choix des actifs, puis remise à zéro du portefeuille
 $("reset").addEventListener("click", () => {
-  $("setupIntro").textContent = `Le portefeuille repart à ${nf(state.startCash, 0)} USDT, répartis à parts égales entre les actifs cochés. L'historique des ordres est effacé.`;
+  $("setupIntro").textContent = `Le portefeuille repart à ${nf(state.startCash, 0)} ${quote()}, répartis à parts égales entre les actifs cochés. L'historique des ordres est effacé.`;
   $("setupError").textContent = "";
   $("setupAssets").replaceChildren(
     ...state.config.symbols.map((symbol) => {
@@ -482,4 +774,7 @@ $("setupStart").addEventListener("click", async (event) => {
   }
 });
 
-init().catch((err) => notify(`Impossible de joindre le bot : ${err.message}`));
+init().catch((err) => {
+  notify(`Impossible de joindre le bot : ${err.message}`);
+  markConnectionLost();
+});

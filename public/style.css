@@ -129,6 +129,13 @@ button:focus-visible {
   background: var(--surface);
 }
 
+/* Désynchronisation papier / exchange, ou actif indisponible : à voir immédiatement */
+.alert {
+  border-width: 2px;
+  background: color-mix(in srgb, var(--down) 18%, var(--surface));
+  font-weight: 500;
+}
+
 main {
   display: grid;
   gap: 16px;
@@ -470,4 +477,280 @@ legend {
 td small {
   display: block;
   color: var(--muted);
+}
+
+/* ---------- Notifications : cloche, panneau, toasts ---------- */
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notif-wrap {
+  position: relative;
+}
+
+.icon-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+}
+
+.badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--down);
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+.notif-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(480px, 70vh);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--surface);
+  border: 1px solid var(--axis);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+.notif-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.notif-panel-head h2 {
+  font-size: 15px;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.notif-list {
+  overflow: auto;
+  padding: 4px;
+}
+
+.notif-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 6px;
+}
+
+.notif-item + .notif-item {
+  border-top: 1px solid var(--grid);
+}
+
+.notif-item.unread {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.notif-item-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notif-item-body p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.notif-item-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.notif-level {
+  font-weight: 600;
+}
+
+.notif-error .notif-level,
+.toast-error .toast-level {
+  color: var(--down);
+}
+
+.notif-warn .notif-level,
+.toast-warn .toast-level {
+  color: var(--plain);
+}
+
+.notif-info .notif-level,
+.toast-info .toast-level {
+  color: var(--accent);
+}
+
+.notif-icon {
+  flex: none;
+  margin-top: 1px;
+}
+
+.notif-icon svg {
+  display: block;
+}
+
+.notif-error .notif-icon,
+.toast-error .notif-icon {
+  color: var(--down);
+}
+
+.notif-warn .notif-icon,
+.toast-warn .notif-icon {
+  color: var(--plain);
+}
+
+.notif-info .notif-icon,
+.toast-info .notif-icon {
+  color: var(--accent);
+}
+
+.empty-panel {
+  padding: 16px;
+  color: var(--ink-2);
+}
+
+.toasts {
+  position: fixed;
+  z-index: 40;
+  bottom: 16px;
+  right: clamp(16px, 4vw, 40px);
+  width: min(360px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--axis);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  max-height: 200px;
+  transition: opacity 0.2s ease, transform 0.2s ease, max-height 0.25s ease, margin 0.25s ease, padding 0.25s ease;
+}
+
+.toast-error {
+  border-color: var(--down);
+}
+
+.toast-warn {
+  border-color: var(--plain);
+}
+
+.toast-info {
+  border-color: var(--accent);
+}
+
+.toast-leaving {
+  opacity: 0;
+  transform: translateY(6px);
+  max-height: 0;
+  margin: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-width: 0;
+}
+
+.toast-body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.toast-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.toast-message {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.toast-close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-2);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.toast-close:hover {
+  background: var(--grid);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .toasts {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+
+  /* Ancré sous l'en-tête plutôt qu'en bas : la pile de toasts occupe déjà le bas de l'écran */
+  .notif-panel {
+    position: fixed;
+    inset: 64px 16px auto 16px;
+    top: max(64px, env(safe-area-inset-top, 0px) + 56px);
+    width: auto;
+    max-height: min(420px, calc(100vh - 96px));
+  }
 }
