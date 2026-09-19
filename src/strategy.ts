@@ -26,9 +26,12 @@ type DecisionInput = {
   now?: number;
 };
 
-type StrategyConfig = Pick<Config, "strategy" | "news">;
+type StrategyConfig = Pick<Config, "strategy" | "news" | "quote">;
 
 const pct = (ratio: number) => `${ratio >= 0 ? "+" : "−"}${Math.abs(ratio * 100).toFixed(1)} %`;
+
+// Actif d'un symbole : BTC-EUR → BTC selon la devise de cotation configurée
+export const baseOf = (symbol: string, quote: string): string => (symbol.endsWith(`-${quote}`) ? symbol.slice(0, -(quote.length + 1)) : symbol);
 
 export function newsBias(judgments: Judgment[], base: string, now: number, cfg: StrategyConfig["news"]) {
   const relevant = judgments.filter((j) => (j.asset === base || j.asset === "crypto") && j.assetConfidence >= cfg.minConfidence);
@@ -48,18 +51,18 @@ export function newsBias(judgments: Judgment[], base: string, now: number, cfg: 
 }
 
 // Hystérésis : haussier au-dessus de EMA×(1+bande), baissier sous EMA×(1−bande) ; `tilt` (news) décale les seuils de la dernière bougie
-export function trendRegime(closes: number[], s: { emaPeriod: number; band: number }, tilt = 0) {
-  const k = 2 / (s.emaPeriod + 1);
+export function trendRegime(closes: number[], strategy: { emaPeriod: number; band: number }, tilt = 0) {
+  const k = 2 / (strategy.emaPeriod + 1);
   let ema = closes[0] ?? 0;
   let trend: Trend = "none";
   closes.forEach((close, i) => {
     if (i) ema = close * k + ema * (1 - k);
-    if (i < s.emaPeriod) return;
+    if (i < strategy.emaPeriod) return;
     const shift = i === closes.length - 1 ? tilt : 0;
-    if (close > ema * (1 + s.band - shift)) trend = "up";
-    else if (close < ema * (1 - s.band - shift)) trend = "down";
+    if (close > ema * (1 + strategy.band - shift)) trend = "up";
+    else if (close < ema * (1 - strategy.band - shift)) trend = "down";
   });
-  return { trend: trend as Trend, ema, buyAbove: ema * (1 + s.band - tilt), sellBelow: ema * (1 - s.band - tilt) };
+  return { trend: trend as Trend, ema, buyAbove: ema * (1 + strategy.band - tilt), sellBelow: ema * (1 - strategy.band - tilt) };
 }
 
 // `closes` = bougies clôturées uniquement : on ne décide jamais sur une bougie en cours
@@ -67,7 +70,7 @@ export function decide(input: DecisionInput, cfg: StrategyConfig = config): Deci
   const { symbol, closes, position } = input;
   const s = cfg.strategy;
   const price = closes.at(-1) ?? 0;
-  const news = newsBias(input.judgments, symbol.replace("USDT", ""), input.now ?? Date.now(), cfg.news);
+  const news = newsBias(input.judgments, baseOf(symbol, cfg.quote), input.now ?? Date.now(), cfg.news);
   const regime = trendRegime(closes, s, s.newsTilt * (news.score ?? 0));
   const decision = (action: Action, reason: string): Decision => ({ symbol, price, action, ...regime, news: news.score, headlinesUsed: news.count, reason });
 

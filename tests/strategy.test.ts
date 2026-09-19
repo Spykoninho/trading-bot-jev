@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Judgment } from "../src/brain.js";
 import type { Position } from "../src/portfolio.js";
-import { decide, newsBias, trendRegime } from "../src/strategy.js";
+import { baseOf, decide, newsBias, trendRegime } from "../src/strategy.js";
 
 const NOW = Date.parse("2026-01-01T12:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
 
 const cfg = {
+  quote: "EUR",
   strategy: { interval: "4h" as const, emaPeriod: 10, band: 0.01, newsTilt: 0.005, window: 1000 },
-  news: { minConfidence: 0.5, halfLifeHours: 3, regulatoryRisk: 0.7 },
+  news: { minConfidence: 0.5, halfLifeHours: 3, regulatoryRisk: 0.7, windowMs: 24 * 3_600_000, maxKept: 2000, latencyMs: 120_000 },
 };
 
 const judgment = (over: Partial<Judgment> & { age?: number } = {}): Judgment => ({
@@ -25,8 +26,8 @@ const judgment = (over: Partial<Judgment> & { age?: number } = {}): Judgment => 
 const flat = Array(30).fill(100);
 const rising = [...flat, 101, 102, 103, 104, 105];
 const falling = [...flat, 99, 98, 97, 96, 95];
-const position: Position = { symbol: "BTCUSDT", qty: 1, entryPrice: 100, cost: 100, entryTime: hoursAgo(10) };
-const input = (over: Partial<Parameters<typeof decide>[0]>) => ({ symbol: "BTCUSDT", closes: flat, judgments: [], now: NOW, ...over });
+const position: Position = { symbol: "BTC-EUR", qty: 1, entryPrice: 100, cost: 100, entryTime: hoursAgo(10) };
+const input = (over: Partial<Parameters<typeof decide>[0]>) => ({ symbol: "BTC-EUR", closes: flat, judgments: [], now: NOW, ...over });
 
 describe("newsBias", () => {
   it("ignores unrelated assets and low-confidence asset picks", () => {
@@ -93,5 +94,15 @@ describe("decide", () => {
     const bullish = [judgment({ sentiment: 1 }), judgment({ sentiment: 1 })];
     expect(decide(input({ closes: edge }), cfg).action).toBe("HOLD");
     expect(decide(input({ closes: edge, judgments: bullish }), cfg).action).toBe("BUY");
+  });
+
+  it("finds the asset's headlines whatever the configured quote currency", () => {
+    expect(baseOf("BTC-USDC", "USDC")).toBe("BTC");
+    const usdc = { ...cfg, quote: "USDC" };
+    const bullish = [judgment({ sentiment: 1 }), judgment({ sentiment: 1 })];
+    const edge = [...flat, 100.9];
+    expect(decide(input({ symbol: "BTC-USDC", closes: edge, judgments: bullish }), usdc)).toMatchObject({ action: "BUY", headlinesUsed: 2 });
+    // Sans la dérivation, l'actif jugé « BTC » ne serait jamais rapproché du symbole
+    expect(decide(input({ symbol: "BTC-USDC", closes: edge, judgments: bullish }), cfg).headlinesUsed).toBe(0);
   });
 });
