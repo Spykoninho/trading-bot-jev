@@ -1,7 +1,7 @@
 {
   "name": "trading-bot-jev",
   "version": "1.0.0",
-  "description": "Crypto trading bot on Binance testnet using TypeSafe (Jev) to judge news",
+  "description": "Trend-following crypto trading bot with news reading by TypeSafe Jev — paper and live modes, EUR pairs",
   "main": "index.js",
   "scripts": {
     "test": "vitest run",
@@ -12,10 +12,21 @@
     "study": "tsx src/event-study.ts"
   },
   "keywords": [],
-  "author": "",
+  "author": "Mathis Fremiot",
   "license": "MIT",
   "type": "module",
-  "private": "true",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spykoninho/trading-bot-jev.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Spykoninho/trading-bot-jev/issues"
+  },
+  "homepage": "https://github.com/Spykoninho/trading-bot-jev",
+  "engines": {
+    "node": ">=20.12.0"
+  },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
     "@typesafe-ai/sdk": "^0.6.0",
