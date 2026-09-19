@@ -15,7 +15,9 @@ export function startServer(): void {
   app.onError((err, c) => c.json({ error: err.message }, 500));
 
   app.get("/api/state", (c) => c.json(view()));
-  app.get("/api/backtest", async (c) => c.json(await runBacktest()));
+  // En réel, le serveur ne sert qu'au suivi : pas de replay ni de remise à zéro, même en appelant l'API à la main
+  const trackingOnly = (c: { json: (body: unknown, status: 403) => Response }) => c.json({ error: "Indisponible en mode réel : ce tableau de bord ne sert qu'au suivi" }, 403);
+  app.get("/api/backtest", async (c) => (config.exchange ? trackingOnly(c) : c.json(await runBacktest())));
 
   // Server-Sent Events : le bot pousse ticks, trades et news, l'interface ne fait aucun polling
   app.get("/api/stream", (c) =>
@@ -38,6 +40,7 @@ export function startServer(): void {
   });
 
   app.post("/api/reset", async (c) => {
+    if (config.exchange) return trackingOnly(c);
     const body = (await c.req.json().catch(() => ({}))) as { symbols?: unknown };
     const symbols = Array.isArray(body.symbols) ? body.symbols.map(String) : [];
     try {

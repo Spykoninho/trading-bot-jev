@@ -695,8 +695,16 @@ async function load() {
   await loadCandles(true);
 }
 
+// En réel, le tableau de bord ne sert qu'au suivi : ni replay, ni nouvelle simulation
+function applyMode() {
+  const real = state.config.mode === "real";
+  $("reset").hidden = real;
+  $("replaySection").hidden = real;
+}
+
 async function init() {
   state = await api("/api/state");
+  applyMode();
   setupEquity();
   $("equityCaption").textContent = `Valeur du portefeuille en ${quote()}, vert au-dessus du capital de départ, rouge en dessous`;
   state.config.symbols.forEach(setupMarket);
