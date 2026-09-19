@@ -51,6 +51,6 @@ export function startServer(): void {
   app.get("/vendor/charts.js", serveStatic({ path: "./node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js" }));
   app.use("/*", serveStatic({ root: "./public" }));
 
-  serve({ fetch: app.fetch, port: config.port, hostname: "127.0.0.1" });
+  serve({ fetch: app.fetch, port: config.port, hostname: config.host });
   console.log(`interface : http://localhost:${config.port}`);
 }

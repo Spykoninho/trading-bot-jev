@@ -36,6 +36,8 @@ export const config = {
   // 4 bps : le carnet USDC est ~40× moins profond que l'EUR (écart achat/vente mesuré de 3 à 5 bps)
   slippageBps: Number(env.SLIPPAGE_BPS ?? 4),
   port: Number(env.PORT ?? 3210),
+  // Local seulement par défaut ; 0.0.0.0 uniquement dans un conteneur dont le port n'est publié que sur 127.0.0.1
+  host: env.HOST ?? "127.0.0.1",
   exchange: real ? { key: env.BITVAVO_API_KEY ?? "", secret: env.BITVAVO_API_SECRET ?? "", operatorId: Number(env.BITVAVO_OPERATOR_ID ?? 1), real: true } : null,
   candlesEverySec: 60,
   // Suivi de tendance retenu par backtest (3 ans, frais inclus) : voir README
