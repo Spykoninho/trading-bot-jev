@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { judgeHeadlines, judgeVersion, type Judgment } from "./brain.js";
+import { judgeHeadlines, judgeVersion, migrateJudgment, type Judgment } from "./brain.js";
 import { config } from "./config.js";
 import { BINANCE, FEEDS, HEADERS, binanceAnnouncements, fedBody, headlineKey, parseRss, plain, type Headline } from "./news.js";
+import { pool } from "./pool.js";
 
 // Archive des titres d'époque, avec les mêmes noms de sources que le direct
 const FILE = "data/history.json";
@@ -16,11 +17,14 @@ const WAYBACK_FEEDS: Record<string, { url: string; withBody: boolean }> = {
 const FED_INDEX = "https://www.federalreserve.gov/json/ne-press.json";
 const TRUMP_ARCHIVE = "https://ix.cnn.io/data/truth-social/truth_archive.json";
 
-type Archive = { captures: string[]; headlines: Headline[]; judgments: Judgment[] };
+export type Archive = { captures: string[]; headlines: Headline[]; judgments: Judgment[] };
 
 export async function loadArchive(): Promise<Archive> {
   try {
-    return JSON.parse(await readFile(FILE, "utf8")) as Archive;
+    const archive = JSON.parse(await readFile(FILE, "utf8")) as Archive;
+    // Les jugements d'archive antérieurs aux signaux sont relus gratuitement : rien n'est renvoyé à Jev
+    archive.judgments = archive.judgments.map(migrateJudgment);
+    return archive;
   } catch {
     return { captures: [], headlines: [], judgments: [] };
   }
@@ -32,7 +36,7 @@ async function save(archive: Archive): Promise<void> {
 }
 
 // Ajoute un titre, ou complète un titre déjà connu avec son texte et son lien
-function upsert(archive: Archive, index: Map<string, Headline>, h: Headline, from: Date): void {
+export function upsert(archive: Archive, index: Map<string, Headline>, h: Headline, from: Date): void {
   if (!h.title || Date.parse(h.publishedAt) < from.getTime()) return;
   const known = index.get(headlineKey(h));
   if (known) return void Object.assign(known, { body: known.body ?? h.body, link: known.link ?? h.link });
@@ -61,13 +65,6 @@ async function listCaptures(url: string, from: Date): Promise<string[]> {
     return (await res.json()) as string[][];
   });
   return rows.slice(1).map((r) => r[0]!);
-}
-
-async function pool<T>(items: T[], size: number, worker: (item: T) => Promise<void>): Promise<void> {
-  const queue = [...items];
-  await Promise.all(Array.from({ length: size }, async () => {
-    for (let item = queue.shift(); item !== undefined; item = queue.shift()) await worker(item);
-  }));
 }
 
 async function collectHeadlines(archive: Archive, from: Date): Promise<void> {

@@ -19,14 +19,20 @@ export type TrackedEvent = {
 // Au-delà, le titre était déjà dans le flux au démarrage du bot : il n'a pas été capté en direct, on ne le suit pas
 const LIVE_LATENCY_SEC = 300;
 
-// Un événement « marché crypto dans son ensemble » est mesuré sur le BTC
-export const SYMBOL: Record<string, string> = { BTC: "BTCUSDT", ETH: "ETHUSDT", SOL: "SOLUSDT", crypto: "BTCUSDT" };
+// Actifs par défaut, alignés sur config.symbols : l'appelant passe les siens plutôt que d'importer la config ici
+const DEFAULT_SYMBOLS = ["BTC-EUR", "ETH-EUR", "SOL-EUR"];
+
+// Le symbole à suivre pour un actif jugé ; un événement « marché crypto dans son ensemble » est mesuré sur le BTC
+export function symbolFor(asset: string, symbols: string[] = DEFAULT_SYMBOLS, quote = "EUR"): string | undefined {
+  const base = asset === "crypto" ? "BTC" : asset;
+  return symbols.find((s) => s === `${base}-${quote}`);
+}
 
 // Fort impact : mêmes seuils en direct et dans l'étude sur l'historique
 export const isStrong = (j: Judgment) => j.material >= 0.7 && Math.abs(j.sentiment) >= 0.5;
 
-export function track(judgment: Judgment, kind: Source["kind"], prices: Record<string, number>, minConfidence: number, now = Date.now()): TrackedEvent | null {
-  const symbol = SYMBOL[judgment.asset];
+export function track(judgment: Judgment, kind: Source["kind"], prices: Record<string, number>, minConfidence: number, now = Date.now(), symbols?: string[], quote?: string): TrackedEvent | null {
+  const symbol = symbolFor(judgment.asset, symbols, quote);
   const latencySec = Math.round((now - Date.parse(judgment.headline.publishedAt)) / 1000);
   if (!symbol || judgment.assetConfidence < minConfidence || !prices[symbol] || latencySec > LIVE_LATENCY_SEC) return null;
   return {
@@ -41,7 +47,7 @@ export function track(judgment: Judgment, kind: Source["kind"], prices: Record<s
   };
 }
 
-// Relevés arrivés à échéance et pas encore faits ; la minute doit être clôturée pour que Binance la renvoie
+// Relevés arrivés à échéance et pas encore faits ; la minute doit être clôturée pour que la plateforme la renvoie
 export function dueReadings(events: TrackedEvent[], now = Date.now()): { event: TrackedEvent; horizon: Horizon; at: number }[] {
   return events.flatMap((event) =>
     HORIZONS.filter((h) => event.after[h] === undefined)
@@ -50,11 +56,15 @@ export function dueReadings(events: TrackedEvent[], now = Date.now()): { event: 
   );
 }
 
-// Règle du circuit immédiat : une réponse de Jev à une question de source déclenche un achat à durée fixe
-type EventRule = { name: string; source: string; detail: string; min: number; share: number; holdMin: number };
+// Règle du circuit immédiat : un signal de Jev au-dessus de son seuil déclenche un achat à durée fixe
+export type EventRule = { source: string; signal: string; min: number; share: number; holdMin: number };
 
-export const matchRule = (e: TrackedEvent, rules: EventRule[]) =>
-  rules.find((r) => e.judgment.headline.source === r.source && Number(e.judgment.details?.[r.detail]) >= r.min);
+// Signaux que chaque source sait émettre : de quoi valider les règles configurées au démarrage
+export { knownSignals } from "./brain.js";
+
+// Générique : l'appelant garde les champs qu'il ajoute à ses règles (le libellé affiché, par exemple)
+export const matchRule = <R extends EventRule>(e: TrackedEvent, rules: R[]): R | undefined =>
+  rules.find((r) => e.judgment.headline.source === r.source && ((e.judgment.signals ?? {})[r.signal] ?? 0) >= r.min);
 
 // Rendement moyen dans le sens prédit par Jev, par horizon et par niveau d'impact
 export function scoreboard(events: TrackedEvent[]) {
