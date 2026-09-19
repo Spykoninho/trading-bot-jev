@@ -279,9 +279,10 @@ async function pollSource(source: Source): Promise<void> {
 
 // Relevé des prix à échéance (+5 min, +15 min, +1 h, +4 h) : on lit la bougie 1 min clôturée, même après un redémarrage
 async function fillReadings(): Promise<void> {
-  const due = dueReadings(state.events);
+  // Les événements suivis sous d'anciens symboles (autre devise ou plateforme) ne sont plus relevés
+  const due = dueReadings(state.events).filter(({ event }) => config.symbols.includes(event.symbol));
   for (const { event, horizon, at } of due) {
-    const candle = await fetchCandleAt(event.symbol, "1m", Math.floor(at / 60_000) * 60_000);
+    const candle = await fetchCandleAt(event.symbol, "1m", Math.floor(at / 60_000) * 60_000).catch(() => null);
     if (candle) event.after[horizon] = candle.close;
   }
   if (due.length) emit("events", eventsView());
