@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALERT_REPEAT_MS, appendWait, journal, latest, shouldAlert, staleState, type Wait } from "../src/bot.js";
+import { ALERT_REPEAT_MS, appendWait, isList, journal, latest, shouldAlert, staleState, type Wait } from "../src/bot.js";
 import type { Judgment } from "../src/brain.js";
 import { config } from "../src/config.js";
 
@@ -105,5 +105,12 @@ describe("journal", () => {
       ["BUY", null],
       ["HOLD", false],
     ]);
+  });
+});
+
+describe("isList", () => {
+  it("accepts the dashboard lists and rejects inherited object keys", () => {
+    expect(["journal", "news", "events"].every(isList)).toBe(true);
+    expect(["constructor", "__proto__", "toString", "waits"].some(isList)).toBe(false);
   });
 });

@@ -143,7 +143,7 @@ function setupMarket(symbol) {
     borderVisible: false,
   });
   const threshold = (title, color) => series.createPriceLine({ price: 0, color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title });
-  markets[symbol] = { panel, price, signal, chart, series, markers: LW.createSeriesMarkers(series, []), buyLine: threshold("achat", css("--up")), sellLine: threshold("vente", css("--down")), last: null, bars: [], loading: false, done: false };
+  markets[symbol] = { panel, price, signal, chart, series, markers: LW.createSeriesMarkers(series, []), buyLine: threshold("achat", css("--up")), sellLine: threshold("vente", css("--down")), last: null, bars: [], gen: 0, loading: false, done: false, retryAt: 0 };
   onLeftEdge(chart, () => loadOlderCandles(symbol));
 }
 
@@ -154,13 +154,14 @@ async function fetchBars(symbol, end) {
 }
 
 // zoom = true au chargement et au changement d'intervalle, pas lors des resynchronisations
+// `gen` change à chaque rechargement complet : toute réponse lancée avant est ignorée
 async function loadCandles(zoom = false) {
   await Promise.all(
     state.config.symbols.map(async (symbol) => {
-      const asked = interval;
-      const bars = await fetchBars(symbol);
-      if (asked !== interval) return;
       const m = markets[symbol];
+      const gen = zoom ? ++m.gen : m.gen;
+      const bars = await fetchBars(symbol);
+      if (gen !== m.gen) return;
       // Resynchronisation : seules les bougies récentes sont remplacées, l'historique chargé en dézoomant reste
       m.bars = zoom ? bars : [...m.bars.filter((b) => b.time < (bars[0]?.time ?? Infinity)), ...bars];
       if (zoom) m.done = false;
@@ -174,17 +175,21 @@ async function loadCandles(zoom = false) {
 
 async function loadOlderCandles(symbol) {
   const m = markets[symbol];
-  if (m.loading || m.done || !m.bars.length) return;
+  if (m.loading || m.done || !m.bars.length || Date.now() < m.retryAt) return;
   m.loading = true;
-  const asked = interval;
+  const gen = m.gen;
   try {
     const first = m.bars[0].time;
     const bars = (await fetchBars(symbol, (first - TZ) * 1000)).filter((b) => b.time < first);
-    if (asked !== interval) return;
+    if (gen !== m.gen) return;
     if (!bars.length) return void (m.done = true);
     m.bars = [...bars, ...m.bars];
     m.series.setData(m.bars);
     drawMarkers(symbol);
+  } catch (err) {
+    // Plateforme en limite de débit ou injoignable : pas de nouvel essai à chaque mouvement du graphique
+    m.retryAt = Date.now() + 15_000;
+    throw err;
   } finally {
     m.loading = false;
   }
@@ -558,21 +563,32 @@ function table(head, rows) {
 // ---------- Listes paginées (journal, titres, événements) ----------
 // Le serveur filtre et envoie une page à la fois : { items, total, scanned }, scanned = taille avant filtre
 
+const PAGE = 30;
 const lists = {};
 const RENDER = { journal: renderTrades, news: renderNews, events: renderEvents };
+// Numéro de version par liste : une réponse arrivée après une mise à jour plus récente est ignorée
+const listVersion = { journal: 0, news: 0, events: 0 };
+
+// Liste en direct : on relit toujours depuis le début, jamais par décalage, pour éviter doublons et trous
+async function snapshot(name, limit) {
+  return (await api(`/api/page/${name}?limit=${limit}`)).items;
+}
 
 // Nouvelle première page reçue du flux : si plus de lignes étaient dépliées, on en recharge autant
 async function setList(name, data) {
+  const version = ++listVersion[name];
   const shown = lists[name]?.items.length ?? 0;
-  if (shown > data.items.length && data.total > data.items.length) data = { ...data, items: (await api(`/api/page/${name}?limit=${shown}`)).items };
+  if (shown > data.items.length && data.total > data.items.length) data = { ...data, items: await snapshot(name, shown) };
+  if (version !== listVersion[name]) return;
   lists[name] = data;
   RENDER[name]();
 }
 
 async function showMore(name) {
-  const list = lists[name];
-  const next = await api(`/api/page/${name}?offset=${list.items.length}`);
-  lists[name] = { ...list, items: [...list.items, ...next.items], total: next.total };
+  const version = ++listVersion[name];
+  const items = await snapshot(name, lists[name].items.length + PAGE);
+  if (version !== listVersion[name]) return;
+  lists[name] = { ...lists[name], items };
   RENDER[name]();
 }
 
@@ -582,7 +598,10 @@ function moreButton(name) {
   const button = el("button", { type: "button", class: "more" }, `Afficher la suite (${total - items.length} de plus)`);
   button.addEventListener("click", () => {
     button.disabled = true;
-    showMore(name).catch((err) => notify(err.message));
+    showMore(name).catch((err) => {
+      button.disabled = false;
+      notify(err.message);
+    });
   });
   return [button];
 }
@@ -825,6 +844,7 @@ async function load() {
   loadEquity();
   // Repart de la première page de chaque liste
   for (const name of Object.keys(RENDER)) {
+    listVersion[name]++;
     lists[name] = state[name];
     RENDER[name]();
   }

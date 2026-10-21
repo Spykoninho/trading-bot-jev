@@ -478,7 +478,7 @@ const LISTS = {
 };
 const SCANNED: Record<ListName, () => number> = { journal: () => state.portfolio.trades.length + state.waits.length, news: () => state.judgments.length, events: () => state.events.length };
 export type ListName = keyof typeof LISTS;
-export const isList = (name: string): name is ListName => name in LISTS;
+export const isList = (name: string): name is ListName => Object.hasOwn(LISTS, name);
 
 export function page(name: ListName, offset = 0, limit = PAGE) {
   const all = LISTS[name]();
