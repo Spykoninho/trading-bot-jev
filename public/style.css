@@ -348,8 +348,12 @@ td .gauge {
   min-width: 150px;
 }
 
-.ignored td {
-  color: var(--muted);
+.wait td {
+  color: var(--ink-2);
+}
+
+.more {
+  margin-top: 12px;
 }
 
 .empty {

@@ -72,7 +72,7 @@
 
       <div class="toolbar">
         <div id="intervals" class="segmented" role="group" aria-label="Durée d'une bougie"></div>
-        <p class="muted">▲ achat du bot, ▼ vente du bot. Lignes pointillées : seuils d'achat et de vente de la stratégie.</p>
+        <p class="muted">▲ achat du bot, ▼ vente du bot. Lignes pointillées : seuils d'achat et de vente de la stratégie. Dézoome pour charger l'historique plus ancien.</p>
       </div>
       <section id="markets" class="markets" aria-label="Cours en direct"></section>
 
@@ -96,7 +96,7 @@
 
       <section class="panel" aria-labelledby="events-title">
         <h2 id="events-title">Test en direct : le prix bouge-t-il après une news ?</h2>
-        <p class="muted">Chaque publication captée à chaud est enregistrée avec le prix du moment, puis le prix est relevé plus tard. Positif : le prix a suivi Jev.</p>
+        <p class="muted">Chaque publication captée à chaud est enregistrée avec le prix du moment, puis le prix est relevé plus tard. Positif : le prix a suivi Jev. Le bilan compte toutes les publications ; la liste ne montre que celles à fort impact (impact marché ≥ 0,7 et sentiment net).</p>
         <p id="sources" class="muted"></p>
         <div id="eventStats" role="status"></div>
         <div id="events" class="scroll"></div>
@@ -104,13 +104,13 @@
 
       <section class="panel" aria-labelledby="trades-title">
         <h2 id="trades-title">Décisions du bot en direct</h2>
-        <p class="muted">À chaque clôture de bougie de 4 h, le bot réévalue chaque actif : il achète, vend ou attend.</p>
+        <p class="muted">À chaque clôture de bougie de 4 h, le bot réévalue chaque actif : il achète, vend ou attend. Entre deux ordres, les attentes d'un actif sont résumées sur une seule ligne.</p>
         <div id="trades" class="scroll"></div>
       </section>
 
       <section class="panel" aria-labelledby="news-title">
         <h2 id="news-title">Titres jugés par Jev</h2>
-        <p class="muted">Les réponses de Jev à chaque publication. Grisé : ignoré (sans rapport, ou actif peu sûr).</p>
+        <p class="muted">Seules les publications à fort impact selon Jev : impact marché ≥ 0,7 avec un sentiment net, ou risque réglementaire assez haut pour bloquer un achat.</p>
         <div id="news" class="scroll"></div>
       </section>
     </main>

@@ -65,6 +65,14 @@ let equitySeries;
 let holdSeries;
 let lastEquityTime = 0;
 const markets = {};
+// Dézoomer près du bord gauche d'un graphique va chercher la page d'historique précédente
+const EDGE_BARS = 10;
+const OLDER_CANDLES = 1000;
+const OLDER_EQUITY = 5000;
+// done tant que loadEquity n'a pas posé le premier point : le graphique vide déclenche déjà l'événement de bord
+const older = { first: null, loading: false, done: true };
+
+const onLeftEdge = (chart, load) => chart.timeScale().subscribeVisibleLogicalRangeChange((range) => range && range.from < EDGE_BARS && load().catch((err) => notify(err.message)));
 
 function pushEquity(ms, value, hold) {
   const time = sec(ms);
@@ -90,13 +98,33 @@ function setupEquity() {
     bottomFillColor2: `${down}47`,
     lineWidth: 2,
   });
+  onLeftEdge(chart, loadOlderEquity);
 }
 
+// L'état initial ne porte que le dernier jour d'equity
 function loadEquity() {
   lastEquityTime = 0;
   equitySeries.setData([]);
   holdSeries.setData([]);
   for (const h of state.history) pushEquity(Date.parse(h.time), h.equity, h.hold);
+  Object.assign(older, { first: state.history[0]?.time ?? null, loading: false, done: !state.history.length });
+}
+
+async function loadOlderEquity() {
+  if (older.loading || older.done || !older.first) return;
+  older.loading = true;
+  try {
+    const before = older.first;
+    const points = (await api(`/api/history?before=${encodeURIComponent(before)}&limit=${OLDER_EQUITY}`)).filter((h) => h.time < before);
+    if (before !== older.first) return;
+    older.done = points.length < OLDER_EQUITY;
+    if (!points.length) return;
+    older.first = points[0].time;
+    equitySeries.setData([...points.map((h) => ({ time: sec(Date.parse(h.time)), value: h.equity })), ...equitySeries.data()]);
+    holdSeries.setData([...points.filter((h) => typeof h.hold === "number").map((h) => ({ time: sec(Date.parse(h.time)), value: h.hold })), ...holdSeries.data()]);
+  } finally {
+    older.loading = false;
+  }
 }
 
 function setupMarket(symbol) {
@@ -115,29 +143,58 @@ function setupMarket(symbol) {
     borderVisible: false,
   });
   const threshold = (title, color) => series.createPriceLine({ price: 0, color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title });
-  markets[symbol] = { panel, price, signal, chart, series, markers: LW.createSeriesMarkers(series, []), buyLine: threshold("achat", css("--up")), sellLine: threshold("vente", css("--down")), last: null, first: 0 };
+  markets[symbol] = { panel, price, signal, chart, series, markers: LW.createSeriesMarkers(series, []), buyLine: threshold("achat", css("--up")), sellLine: threshold("vente", css("--down")), last: null, bars: [], loading: false, done: false };
+  onLeftEdge(chart, () => loadOlderCandles(symbol));
+}
+
+// `end` en ms : bougies antérieures, pour remonter le temps
+async function fetchBars(symbol, end) {
+  const candles = await api(`/api/candles/${symbol}?interval=${interval}${end ? `&end=${end}&limit=${OLDER_CANDLES}` : ""}`);
+  return candles.map((c) => ({ ...c, time: sec(c.time) }));
 }
 
 // zoom = true au chargement et au changement d'intervalle, pas lors des resynchronisations
 async function loadCandles(zoom = false) {
   await Promise.all(
     state.config.symbols.map(async (symbol) => {
-      const candles = await api(`/api/candles/${symbol}?interval=${interval}`);
-      const bars = candles.map((c) => ({ ...c, time: sec(c.time) }));
+      const asked = interval;
+      const bars = await fetchBars(symbol);
+      if (asked !== interval) return;
       const m = markets[symbol];
-      m.series.setData(bars);
-      m.last = bars.at(-1);
-      m.first = bars[0]?.time ?? 0;
-      if (zoom) m.chart.timeScale().setVisibleLogicalRange({ from: bars.length - 120, to: bars.length + 4 });
+      // Resynchronisation : seules les bougies récentes sont remplacées, l'historique chargé en dézoomant reste
+      m.bars = zoom ? bars : [...m.bars.filter((b) => b.time < (bars[0]?.time ?? Infinity)), ...bars];
+      if (zoom) m.done = false;
+      m.series.setData(m.bars);
+      m.last = m.bars.at(-1);
+      if (zoom) m.chart.timeScale().setVisibleLogicalRange({ from: m.bars.length - 120, to: m.bars.length + 4 });
       drawMarkers(symbol);
     }),
   );
 }
 
+async function loadOlderCandles(symbol) {
+  const m = markets[symbol];
+  if (m.loading || m.done || !m.bars.length) return;
+  m.loading = true;
+  const asked = interval;
+  try {
+    const first = m.bars[0].time;
+    const bars = (await fetchBars(symbol, (first - TZ) * 1000)).filter((b) => b.time < first);
+    if (asked !== interval) return;
+    if (!bars.length) return void (m.done = true);
+    m.bars = [...bars, ...m.bars];
+    m.series.setData(m.bars);
+    drawMarkers(symbol);
+  } finally {
+    m.loading = false;
+  }
+}
+
 // Un marqueur par ordre, posé sur la bougie qui contient l'instant de l'ordre
 function drawMarkers(symbol) {
   const m = markets[symbol];
-  m.markers.setMarkers(state.trades.filter((t) => t.symbol === symbol).map((t) => tradeMarker(t, barTime(Date.parse(t.time)))).filter((mark) => mark.time >= m.first));
+  const first = m.bars[0]?.time ?? 0;
+  m.markers.setMarkers(state.trades.filter((t) => t.symbol === symbol).map((t) => tradeMarker(t, barTime(Date.parse(t.time)))).filter((mark) => mark.time >= first));
 }
 
 // La bougie en cours est animée par le flux de prix, sans recharger l'historique
@@ -145,7 +202,10 @@ function pushPrice(symbol, price, ms) {
   const m = markets[symbol];
   if (!m?.last || !price) return;
   const time = barTime(ms);
-  m.last = time > m.last.time ? { time, open: m.last.close, high: price, low: price, close: price } : { ...m.last, high: Math.max(m.last.high, price), low: Math.min(m.last.low, price), close: price };
+  const fresh = time > m.last.time;
+  m.last = fresh ? { time, open: m.last.close, high: price, low: price, close: price } : { ...m.last, high: Math.max(m.last.high, price), low: Math.min(m.last.low, price), close: price };
+  // Gardée aussi dans m.bars : un chargement d'historique ne doit pas effacer la bougie en cours
+  m.bars.splice(fresh ? m.bars.length : m.bars.length - 1, 1, m.last);
   m.series.update(m.last);
 }
 
@@ -495,40 +555,93 @@ function table(head, rows) {
   return el("table", {}, el("thead", {}, el("tr", {}, ...head.map(([label, cls]) => el("th", cls ? { class: cls } : {}, label)))), el("tbody", {}, ...rows));
 }
 
+// ---------- Listes paginées (journal, titres, événements) ----------
+// Le serveur filtre et envoie une page à la fois : { items, total, scanned }, scanned = taille avant filtre
+
+const lists = {};
+const RENDER = { journal: renderTrades, news: renderNews, events: renderEvents };
+
+// Nouvelle première page reçue du flux : si plus de lignes étaient dépliées, on en recharge autant
+async function setList(name, data) {
+  const shown = lists[name]?.items.length ?? 0;
+  if (shown > data.items.length && data.total > data.items.length) data = { ...data, items: (await api(`/api/page/${name}?limit=${shown}`)).items };
+  lists[name] = data;
+  RENDER[name]();
+}
+
+async function showMore(name) {
+  const list = lists[name];
+  const next = await api(`/api/page/${name}?offset=${list.items.length}`);
+  lists[name] = { ...list, items: [...list.items, ...next.items], total: next.total };
+  RENDER[name]();
+}
+
+function moreButton(name) {
+  const { items, total } = lists[name];
+  if (items.length >= total) return [];
+  const button = el("button", { type: "button", class: "more" }, `Afficher la suite (${total - items.length} de plus)`);
+  button.addEventListener("click", () => {
+    button.disabled = true;
+    showMore(name).catch((err) => notify(err.message));
+  });
+  return [button];
+}
+
+const plural = (n, word) => `${n} ${word}${n > 1 ? "s" : ""}`;
+
+// Série d'attente d'un actif entre deux ordres, résumée sur une ligne
+function waitRow(w) {
+  const since = w.since ?? w.time;
+  const span = w.open ? `En attente depuis le ${when(since)}` : since === w.time ? `En attente le ${when(since)}` : `En attente du ${when(since)} au ${when(w.time)}`;
+  return el(
+    "tr",
+    { class: "wait" },
+    el("td", { class: "nowrap" }, when(w.time)),
+    el("td", {}, base(w.symbol)),
+    el("td", {}, el("span", { class: "action" }, ACTIONS.HOLD)),
+    el("td", { class: "num" }, nf(w.price)),
+    el("td", {}),
+    el("td", {}),
+    el("td", {}, `${span}, ${plural(w.count ?? 1, "réévaluation")}.`, el("small", {}, `Dernière : ${w.reason}`)),
+  );
+}
+
 function renderTrades() {
-  // Ordres et attentes dans un même journal, du plus récent au plus ancien
-  const journal = [...state.trades, ...state.waits.map((w) => ({ ...w, side: "HOLD" }))].sort((a, b) => b.time.localeCompare(a.time)).slice(0, 200);
-  if (!journal.length) {
+  const { items } = lists.journal;
+  if (!items.length) {
     $("trades").replaceChildren(el("p", { class: "empty" }, "Aucune décision pour l'instant : la première arrive à la prochaine clôture de bougie."));
     return;
   }
   const head = [["Date"], ["Actif"], ["Décision"], ["Prix", "num"], ["Montant", "num"], ["Résultat net", "num"], ["Raison"]];
-  const rows = journal.map((t) =>
-    el(
-      "tr",
-      {},
-      el("td", { class: "nowrap" }, when(t.time)),
-      el("td", {}, base(t.symbol)),
-      el("td", {}, el("span", { class: `action ${t.side === "BUY" ? "up" : t.side === "SELL" ? "down" : ""}` }, ACTIONS[t.side])),
-      el("td", { class: "num" }, nf(t.price)),
-      el("td", { class: "num" }, t.usdt === undefined ? "" : nf(t.usdt)),
-      el("td", { class: `num ${t.pnl === undefined ? "" : t.pnl >= 0 ? "up" : "down"}` }, t.pnl === undefined ? "" : signed(t.pnl)),
-      el("td", {}, t.reason),
-    ),
+  const rows = items.map((t) =>
+    t.side === "HOLD"
+      ? waitRow(t)
+      : el(
+          "tr",
+          {},
+          el("td", { class: "nowrap" }, when(t.time)),
+          el("td", {}, base(t.symbol)),
+          el("td", {}, el("span", { class: `action ${t.side === "BUY" ? "up" : "down"}` }, ACTIONS[t.side])),
+          el("td", { class: "num" }, nf(t.price)),
+          el("td", { class: "num" }, nf(t.usdt)),
+          el("td", { class: `num ${t.pnl === undefined ? "" : t.pnl >= 0 ? "up" : "down"}` }, t.pnl === undefined ? "" : signed(t.pnl)),
+          el("td", {}, t.reason),
+        ),
   );
-  $("trades").replaceChildren(table(head, rows));
+  $("trades").replaceChildren(table(head, rows), ...moreButton("journal"));
 }
 
 function renderNews() {
-  if (!state.judgments.length) {
-    $("news").replaceChildren(el("p", { class: "empty" }, "Jev n'a encore jugé aucun titre."));
+  const { items, total, scanned } = lists.news;
+  if (!items.length) {
+    $("news").replaceChildren(el("p", { class: "empty" }, scanned ? `Aucun titre à fort impact parmi les ${scanned} jugés sur les dernières 24 h.` : "Jev n'a encore jugé aucun titre."));
     return;
   }
   const head = [["Paru"], ["Source"], ["Titre"], ["Actif"], ["Confiance", "num"], ["Sentiment"], ["Impact marché", "num"], ["Risque réglementaire", "num"]];
-  const rows = state.judgments.map((j) =>
+  const rows = items.map((j) =>
     el(
       "tr",
-      j.asset === "unrelated" || j.assetConfidence < state.config.news.minConfidence ? { class: "ignored" } : {},
+      {},
       el("td", { class: "nowrap" }, when(j.headline.publishedAt)),
       el("td", {}, j.headline.source),
       titleCell(j),
@@ -539,18 +652,18 @@ function renderNews() {
       el("td", { class: "num" }, nf(j.regulatoryRisk)),
     ),
   );
-  $("news").replaceChildren(table(head, rows));
+  $("news").replaceChildren(el("p", { class: "muted" }, `${plural(total, "titre")} à fort impact sur ${scanned} jugés en 24 h.`), table(head, rows), ...moreButton("news"));
 }
 
 const HORIZON_LABELS = { 5: "+5 min", 15: "+15 min", 60: "+1 h", 240: "+4 h" };
 
 function renderEvents() {
-  const { list, scoreboard, sources } = state.events;
+  const { items, total, since, scoreboard, sources } = lists.events;
   const names = (kind) => sources.filter((s) => s.kind === kind).map((s) => s.name.replace(/ \(.*/, "")).join(", ");
   const rules = state.config.eventRules.map((r) => `« ${r.name} » → achat de ${nf(r.share * 100, 0)} %, revendu après ${r.holdMin / 60} h`);
   $("sources").textContent = `Presse : ${names("presse")}. Sources primaires : ${names("primaire")}. Circuit immédiat : ${rules.join(" ; ") || "désactivé"}.`;
 
-  if (!list.length) {
+  if (!scoreboard.tracked) {
     $("eventStats").replaceChildren();
     $("events").replaceChildren(el("p", { class: "empty" }, "Aucune publication captée à chaud pour l'instant."));
     return;
@@ -562,12 +675,16 @@ function renderEvents() {
     el("tr", {}, el("td", {}, label), ...Object.keys(HORIZON_LABELS).map((h) => cell(group[h]))),
   );
   $("eventStats").replaceChildren(
-    el("p", {}, `${scoreboard.tracked} publications captées depuis le ${when(list.at(-1).seenAt)}, retard médian ${scoreboard.medianLatencySec} s. Entre parenthèses : cas où le prix a suivi Jev.`),
+    el("p", {}, `${scoreboard.tracked} publications captées depuis le ${when(since)}, retard médian ${scoreboard.medianLatencySec} s, dont ${total} à fort impact listées ci-dessous. Entre parenthèses : cas où le prix a suivi Jev.`),
     table([["Bilan"], ...Object.values(HORIZON_LABELS).map((name) => [name, "num"])], bilan),
   );
 
+  if (!items.length) {
+    $("events").replaceChildren(el("p", { class: "empty" }, "Aucune publication à fort impact captée pour l'instant."));
+    return;
+  }
   const head = [["Vu à"], ["Source"], ["Retard", "num"], ["Titre"], ["Actif"], ["Avis de Jev"], ["Impact", "num"], ...Object.values(HORIZON_LABELS).map((name) => [name, "num"])];
-  const rows = list.map((e) => {
+  const rows = items.map((e) => {
     const readings = Object.keys(HORIZON_LABELS).map((h) => {
       if (e.after[h] === undefined) return el("td", { class: "num" }, "…");
       const r = e.direction * (e.after[h] / e.priceAtSeen - 1);
@@ -586,7 +703,7 @@ function renderEvents() {
       ...readings,
     );
   });
-  $("events").replaceChildren(table(head, rows));
+  $("events").replaceChildren(table(head, rows), ...moreButton("events"));
 }
 
 function segmented(container, options, selected, onPick) {
@@ -706,9 +823,11 @@ async function load() {
   replay.markers = null;
   $("replayStats").textContent = "";
   loadEquity();
-  renderTrades();
-  renderNews();
-  renderEvents();
+  // Repart de la première page de chaque liste
+  for (const name of Object.keys(RENDER)) {
+    lists[name] = state[name];
+    RENDER[name]();
+  }
   renderLive(state.live);
   await loadCandles(true);
 }
@@ -744,21 +863,9 @@ async function init() {
   stream.addEventListener("trade", (e) => {
     const trade = JSON.parse(e.data);
     state.trades.push(trade);
-    renderTrades();
     drawMarkers(trade.symbol);
   });
-  stream.addEventListener("waits", (e) => {
-    state.waits = JSON.parse(e.data);
-    renderTrades();
-  });
-  stream.addEventListener("news", (e) => {
-    state.judgments = JSON.parse(e.data);
-    renderNews();
-  });
-  stream.addEventListener("events", (e) => {
-    state.events = JSON.parse(e.data);
-    renderEvents();
-  });
+  for (const name of Object.keys(RENDER)) stream.addEventListener(name, (e) => setList(name, JSON.parse(e.data)).catch((err) => notify(err.message)));
   // Canal dédié éventuel, en plus de state.alerts et live.alerts : syncAlerts() dédoublonne par id dans tous les cas
   stream.addEventListener("alerts", (e) => syncAlerts(JSON.parse(e.data)));
   stream.addEventListener("reset", load);
@@ -771,7 +878,7 @@ async function init() {
     markConnectionLost();
   };
 
-  // Resynchronise les bougies avec la plateforme une fois par minute
+  // Resynchronise les bougies récentes avec la plateforme une fois par minute
   setInterval(() => loadCandles().catch(() => {}), 60_000);
 }
 

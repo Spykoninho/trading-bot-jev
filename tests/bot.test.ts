@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALERT_REPEAT_MS, latest, shouldAlert, staleState } from "../src/bot.js";
+import { ALERT_REPEAT_MS, appendWait, journal, latest, shouldAlert, staleState, type Wait } from "../src/bot.js";
 import type { Judgment } from "../src/brain.js";
 import { config } from "../src/config.js";
 
@@ -62,5 +62,48 @@ describe("staleState", () => {
 
   it("keeps a state that matches the current currency and symbols", () => {
     expect(staleState({ quote: "EUR", active: ["BTC-EUR"] }, "EUR", symbols)).toBe(false);
+  });
+});
+
+describe("appendWait", () => {
+  const wait = (symbol: string, h: number, reason = "attente"): Wait => ({ time: hoursAgo(h), symbol, price: 100, reason });
+
+  it("merges the successive waits of an asset into one run that remembers when it started", () => {
+    const waits = [wait("BTC-EUR", 8), wait("BTC-EUR", 4), wait("BTC-EUR", 0, "dernière")].reduce<Wait[]>((acc, w) => appendWait(acc, [], w), []);
+    expect(waits).toEqual([{ ...wait("BTC-EUR", 0, "dernière"), since: hoursAgo(8), count: 3 }]);
+  });
+
+  it("starts a new run once an order has been placed on the asset", () => {
+    let waits = appendWait([], [], wait("BTC-EUR", 8));
+    waits = appendWait(waits, [{ time: hoursAgo(6), symbol: "BTC-EUR" }], wait("BTC-EUR", 4));
+    expect(waits.map((w) => [w.since, w.count])).toEqual([
+      [hoursAgo(8), 1],
+      [hoursAgo(4), 1],
+    ]);
+  });
+
+  it("keeps one run per asset, unaffected by the orders of another asset", () => {
+    let waits = appendWait([], [], wait("BTC-EUR", 8));
+    waits = appendWait(waits, [], wait("ETH-EUR", 8));
+    waits = appendWait(waits, [{ time: hoursAgo(6), symbol: "ETH-EUR" }], wait("BTC-EUR", 4));
+    expect(waits.map((w) => [w.symbol, w.count])).toEqual([
+      ["ETH-EUR", 1],
+      ["BTC-EUR", 2],
+    ]);
+  });
+});
+
+describe("journal", () => {
+  it("lists orders and wait runs newest first, flagging the run still in progress", () => {
+    const trade = { time: hoursAgo(6), symbol: "BTC-EUR", side: "BUY" as const, qty: 1, price: 100, usdt: 100, fee: 0, reason: "achat" };
+    const waits: Wait[] = [
+      { time: hoursAgo(8), symbol: "BTC-EUR", price: 90, reason: "a", since: hoursAgo(20), count: 4 },
+      { time: hoursAgo(0), symbol: "BTC-EUR", price: 110, reason: "b", since: hoursAgo(4), count: 2 },
+    ];
+    expect(journal([trade], waits).map((e) => [e.side, "open" in e ? e.open : null])).toEqual([
+      ["HOLD", true],
+      ["BUY", null],
+      ["HOLD", false],
+    ]);
   });
 });

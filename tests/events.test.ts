@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Judgment } from "../src/brain.js";
-import { dueReadings, matchRule, scoreboard, symbolFor, track, type TrackedEvent } from "../src/events.js";
+import { dueReadings, isImpactful, matchRule, scoreboard, symbolFor, track, type TrackedEvent } from "../src/events.js";
 
 const NOW = Date.parse("2026-01-01T12:00:00Z");
 const prices = { "BTC-EUR": 100, "ETH-EUR": 50 };
@@ -79,5 +79,20 @@ describe("scoreboard", () => {
     expect(s.groups.fort![60]!.mean).toBeCloseTo(0.005);
     expect(s.groups.autres![60]).toMatchObject({ n: 1, wins: 1 });
     expect(s.groups.fort![5]).toMatchObject({ n: 0, mean: null });
+  });
+});
+describe("isImpactful", () => {
+  const base: Judgment = { headline: { title: "t", source: "CoinDesk", publishedAt: "2026-01-01T00:00:00Z" }, asset: "BTC", assetConfidence: 0.9, sentiment: 0.6, sentimentConfidence: 0.8, material: 0.8, regulatoryRisk: 0.1 };
+  const shown = (over: Partial<Judgment>) => isImpactful({ ...base, ...over }, 0.5, 0.7);
+
+  it("shows a strong, clearly signed headline on an identified asset", () => expect(shown({})).toBe(true));
+  it("hides a headline with a weak market impact or a flat sentiment", () => {
+    expect(shown({ material: 0.5 })).toBe(false);
+    expect(shown({ sentiment: 0.2 })).toBe(false);
+  });
+  it("shows a regulatory risk high enough to block a buy, even with a weak impact", () => expect(shown({ material: 0.3, regulatoryRisk: 0.8 })).toBe(true));
+  it("hides unrelated or uncertain assets", () => {
+    expect(shown({ asset: "unrelated" })).toBe(false);
+    expect(shown({ assetConfidence: 0.3 })).toBe(false);
   });
 });

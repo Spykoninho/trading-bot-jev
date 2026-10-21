@@ -31,6 +31,10 @@ export function symbolFor(asset: string, symbols: string[] = DEFAULT_SYMBOLS, qu
 // Fort impact : mêmes seuils en direct et dans l'étude sur l'historique
 export const isStrong = (j: Judgment) => j.material >= 0.7 && Math.abs(j.sentiment) >= 0.5;
 
+// Titre qui mérite d'être montré : actif identifié, et fort impact ou risque réglementaire assez haut pour bloquer un achat
+export const isImpactful = (j: Judgment, minConfidence: number, regulatoryRisk: number) =>
+  j.asset !== "unrelated" && j.assetConfidence >= minConfidence && (isStrong(j) || j.regulatoryRisk >= regulatoryRisk);
+
 export function track(judgment: Judgment, kind: Source["kind"], prices: Record<string, number>, minConfidence: number, now = Date.now(), symbols?: string[], quote?: string): TrackedEvent | null {
   const symbol = symbolFor(judgment.asset, symbols, quote);
   const latencySec = Math.round((now - Date.parse(judgment.headline.publishedAt)) / 1000);
