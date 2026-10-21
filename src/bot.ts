@@ -5,7 +5,7 @@ import { accountBalances, marketBuy, marketSell, SellIncompleteError, symbolFilt
 import { config } from "./config.js";
 import { loadArchive } from "./history.js";
 import { fetchCandleAt, fetchCandles, fetchHistory, startPriceFeed } from "./market.js";
-import { dueReadings, matchRule, scoreboard, track, type TrackedEvent } from "./events.js";
+import { dueReadings, isImpactful, isStrong, matchRule, scoreboard, track, type TrackedEvent } from "./events.js";
 import { SOURCES, headlineKey, type Source } from "./news.js";
 import { buy, close, equity, holdValue, MIN_NOTIONAL, newPortfolio, recordEquity, startHold, stats, totalsFrom, type Position, type Trade } from "./portfolio.js";
 import { baseOf, decide, type Decision } from "./strategy.js";
@@ -15,6 +15,9 @@ const EVENTS_FILE = "data/events.json";
 const MAX_SEEN = 3000;
 const MAX_EVENTS = 5000;
 const MAX_WAITS = 300;
+// Taille d'une page des listes de l'interface, et des points d'equity envoyés à l'ouverture (un jour de relevés minute)
+export const PAGE = 30;
+export const HISTORY_PAGE = 1440;
 // Au-delà, le prix en direct n'est plus fiable : aucun ordre n'est exécuté
 const STALE_FEED_MS = 30_000;
 // Premier passage sur une source : seuls les titres les plus récents sont jugés, le reste du flux est marqué comme vu
@@ -28,8 +31,8 @@ export const state = {
   // Publications déjà jugées (titre + date de parution), toutes sources confondues : jamais rejugées ni recomptées
   seen: [] as string[],
   events: [] as TrackedEvent[],
-  // « Attendre » est aussi une décision : une entrée par actif à chaque clôture de bougie sans ordre, et tout ordre refusé
-  waits: [] as { time: string; symbol: string; price: number; reason: string }[],
+  // « Attendre » est aussi une décision : les attentes successives d'un actif sans ordre entre elles forment une seule entrée
+  waits: [] as Wait[],
   lastCandle: {} as Record<string, number>,
   prices: {} as Record<string, number>,
   closes: {} as Record<string, number[]>,
@@ -44,6 +47,27 @@ export const state = {
 };
 
 export type Alert = { id: number; time: number; level: "error" | "warn" | "info"; message: string };
+
+// `time` = dernière attente, `since` = première de la série, `count` = nombre de réévaluations sans ordre
+export type Wait = { time: string; symbol: string; price: number; reason: string; since?: string; count?: number };
+
+// Pure : prolonge la série d'attente de l'actif tant qu'aucun ordre ne l'a interrompue, sinon en ouvre une nouvelle
+export function appendWait(waits: Wait[], trades: Pick<Trade, "time" | "symbol">[], entry: Wait, max = MAX_WAITS): Wait[] {
+  let i = waits.length - 1;
+  while (i >= 0 && waits[i]!.symbol !== entry.symbol) i--;
+  const prev = waits[i];
+  if (prev && !trades.some((t) => t.symbol === entry.symbol && t.time > prev.time)) {
+    const run = { ...entry, since: prev.since ?? prev.time, count: (prev.count ?? 1) + 1 };
+    return [...waits.slice(0, i), ...waits.slice(i + 1), run];
+  }
+  return [...waits, { ...entry, since: entry.time, count: 1 }].slice(-max);
+}
+
+// Journal affiché : les ordres, et entre eux une ligne par série d'attente ; `open` = série toujours en cours
+export function journal(trades: Trade[], waits: Wait[]) {
+  const runs = waits.map((w) => ({ ...w, side: "HOLD" as const, open: !trades.some((t) => t.symbol === w.symbol && t.time > w.time) }));
+  return [...trades, ...runs].sort((a, b) => b.time.localeCompare(a.time));
+}
 
 const MAX_ALERTS = 100;
 // Anti-répétition : un même message n'est journalisé qu'une fois par tranche de 10 min
@@ -98,8 +122,8 @@ function logWait(symbol: string, price: number, reason: string, key = reason): v
   if (Date.now() - (reported[`${symbol}|${key}`] ?? 0) < 60_000) return;
   reported[`${symbol}|${key}`] = Date.now();
   alert("warn", `${symbol} : ${reason}`);
-  state.waits = [...state.waits, { time: new Date().toISOString(), symbol, price, reason }].slice(-MAX_WAITS);
-  emit("waits", state.waits);
+  state.waits = appendWait(state.waits, state.portfolio.trades, { time: new Date().toISOString(), symbol, price, reason });
+  emit("journal", page("journal"));
 }
 
 // Prix d'exécution : jamais le dernier prix connu ni une clôture de bougie, uniquement un flux temps réel frais
@@ -160,6 +184,7 @@ function announce(trade: Trade): void {
   console.log(`${trade.side} ${trade.symbol} ${trade.usdt.toFixed(2)} ${config.quote} @ ${trade.price} — ${trade.reason}`);
   mirror(trade, Object.values(state.portfolio.positions).find((pos) => pos.entryTime === trade.time));
   emit("trade", trade);
+  emit("journal", page("journal"));
 }
 
 // Circuit immédiat : n'attend pas la clôture d'une bougie 4 h, agit dès qu'un événement capté en direct déclenche une règle
@@ -202,9 +227,9 @@ function decideAll(journal = false): void {
     state.signals[symbol] = decision;
     if (!state.active.includes(symbol)) continue;
     act(decision);
-    if (journal && decision.action === "HOLD") state.waits = [...state.waits, { time: new Date().toISOString(), symbol, price: state.prices[symbol] ?? decision.price, reason: decision.reason }].slice(-MAX_WAITS);
+    if (journal && decision.action === "HOLD") state.waits = appendWait(state.waits, state.portfolio.trades, { time: new Date().toISOString(), symbol, price: state.prices[symbol] ?? decision.price, reason: decision.reason });
   }
-  if (journal) emit("waits", state.waits);
+  if (journal) emit("journal", page("journal"));
 }
 
 async function refreshCandles(): Promise<void> {
@@ -272,7 +297,7 @@ async function pollSource(source: Source): Promise<void> {
   state.events = [...state.events, ...tracked].slice(-MAX_EVENTS);
   tracked.forEach(react);
   console.log(`${source.name} : ${judged.length} nouveau(x) titre(s) jugé(s), ${tracked.length} suivi(s)${skipped.length ? `, ${skipped.length} anciens ignorés au démarrage` : ""}`);
-  emit("news", state.judgments);
+  emit("news", page("news"));
   if (tracked.length) emit("events", eventsView());
   decideAll();
 }
@@ -343,6 +368,8 @@ export async function start(): Promise<void> {
     // Portefeuilles sauvegardés avant les cumuls séparés : on les reconstruit à partir du journal restant
     state.portfolio.totals ??= totalsFrom(state.portfolio.trades);
     state.judgments = latest(state.judgments);
+    // Journal enregistré avant les séries d'attente : une entrée par clôture de bougie, regroupée ici
+    state.waits = state.waits.reduce<Wait[]>((acc, w) => (w.count ? [...acc, w] : appendWait(acc, state.portfolio.trades.filter((t) => t.time <= w.time), w)), []);
   } catch {}
   try {
     state.events = JSON.parse(await readFile(EVENTS_FILE, "utf8"));
@@ -440,8 +467,32 @@ export async function runBacktest(): Promise<Comparison> {
   return result;
 }
 
+// Le texte complet ne sert qu'à Jev : l'interface n'affiche que le titre
+const light = (j: Judgment): Judgment => ({ ...j, headline: { ...j.headline, body: undefined } });
+
+// Listes paginées de l'interface, filtrées sur ce qui compte ; `scanned` = taille avant filtre
+const LISTS = {
+  journal: () => journal(state.portfolio.trades, state.waits),
+  news: () => state.judgments.filter((j) => isImpactful(j, config.news.minConfidence, config.news.regulatoryRisk)).map(light),
+  events: () => state.events.filter((e) => isStrong(e.judgment)).reverse().map((e) => ({ ...e, judgment: light(e.judgment) })),
+};
+const SCANNED: Record<ListName, () => number> = { journal: () => state.portfolio.trades.length + state.waits.length, news: () => state.judgments.length, events: () => state.events.length };
+export type ListName = keyof typeof LISTS;
+export const isList = (name: string): name is ListName => Object.hasOwn(LISTS, name);
+
+export function page(name: ListName, offset = 0, limit = PAGE) {
+  const all = LISTS[name]();
+  return { items: all.slice(offset, offset + limit), total: all.length, scanned: SCANNED[name]() };
+}
+
+// Les `limit` points d'equity qui précèdent `before` : chargés quand on dézoome le graphique
+export function historyBefore(before: string, limit = HISTORY_PAGE) {
+  const older = state.portfolio.history.filter((h) => h.time < before);
+  return older.slice(-limit);
+}
+
 function eventsView() {
-  return { list: state.events.slice(-300).reverse(), scoreboard: scoreboard(state.events), sources: SOURCES.map((s) => ({ name: s.name, kind: s.kind, everySec: s.everySec })) };
+  return { ...page("events"), since: state.events[0]?.seenAt ?? null, scoreboard: scoreboard(state.events), sources: SOURCES.map((s) => ({ name: s.name, kind: s.kind, everySec: s.everySec })) };
 }
 
 // Instantané léger poussé chaque seconde
@@ -467,7 +518,7 @@ function live() {
   };
 }
 
-// État complet, chargé une fois à l'ouverture de la page puis après un reset
+// État de départ, chargé une fois à l'ouverture de la page puis après un reset ; les listes n'y ont que leur première page
 export function view() {
   const portfolio = state.portfolio;
   return {
@@ -486,10 +537,12 @@ export function view() {
     alerts: state.alerts,
     startedAt: portfolio.startedAt,
     startCash: portfolio.startCash,
-    history: portfolio.history,
-    trades: portfolio.trades,
-    waits: state.waits,
-    judgments: state.judgments,
+    // Seul le dernier jour d'equity part à l'ouverture : le reste est demandé en dézoomant
+    history: portfolio.history.slice(-HISTORY_PAGE),
+    // Juste de quoi poser les flèches d'achat et de vente sur les graphiques
+    trades: portfolio.trades.map(({ time, symbol, side }) => ({ time, symbol, side })),
+    journal: page("journal"),
+    news: page("news"),
     events: eventsView(),
     live: live(),
   };
